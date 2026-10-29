@@ -1,0 +1,13 @@
+# Godot 4 editor cache / imports
+.godot/
+*.import
+
+# Rendered output
+frames/
+*.mp4
+*.png.hash
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.tmp
