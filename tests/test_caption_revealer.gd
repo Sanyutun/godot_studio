@@ -6,6 +6,10 @@ extends "res://tests/support/test_case.gd"
 
 const FRAME := 1.0 / 60.0
 const TIMING_TOLERANCE := FRAME * 1.25
+## Bounded wait for the reveal to settle after the director returns. The delta
+## assertion below is the real budget check, so a generous window only makes it
+## more honest (a late reveal fails the timing check, not the wait).
+const SETTLE_GRACE_FRAMES := 10
 
 
 func _run_tests() -> void:
@@ -71,7 +75,7 @@ func _check_mode_timing(active_mode: int, mode_name: String) -> void:
 	# Cues are frame-quantised: a cue authored at 0.25 s fires on the next frame
 	# boundary, so the reveal can settle up to one frame after the shot does.
 	# Give it that bounded window before asserting the timestamp.
-	for _frame in 3:
+	for _frame in SETTLE_GRACE_FRAMES:
 		if reveal_end_usec[0] > 0:
 			break
 		await process_frame
@@ -85,6 +89,7 @@ func _check_mode_timing(active_mode: int, mode_name: String) -> void:
 		var delta_seconds := absf(
 			float(reveal_end_usec[0] - shot_end_usec[0]) / 1_000_000.0
 		)
+		print("  %s: reveal settled %.4fs from the shot end" % [mode_name, delta_seconds])
 		check(
 			delta_seconds <= TIMING_TOLERANCE,
 			"%s: reveal ends within ±1 frame of the shot (%.4fs)" % [mode_name, delta_seconds]

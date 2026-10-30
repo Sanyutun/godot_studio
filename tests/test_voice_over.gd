@@ -16,6 +16,9 @@ func _run_tests() -> void:
 	await _check_stop_voice()
 	await _check_director_target_and_outliving_shot()
 	_check_track_resource()
+	# Let the dummy audio driver release the last playback before ObjectDB
+	# cleanup, otherwise the run reports leaked AudioStreamPlayback instances.
+	await wait(0.2)
 	finish()
 
 
