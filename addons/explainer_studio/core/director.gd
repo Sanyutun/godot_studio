@@ -16,6 +16,8 @@ signal sequence_stopped(sequence: Sequence)
 signal shot_started(index: int, shot: Shot)
 signal shot_finished(index: int, shot: Shot)
 signal cue_fired(cue: Cue, shot_index: int)
+## Rich cue payload for receivers that need the shot's remaining time budget.
+signal cue_event_fired(event: CueEvent)
 signal playback_changed(playing: bool)
 
 ## Camera to drive. When unset, [method _resolve_camera] falls back to
@@ -172,7 +174,7 @@ func _schedule_cues(shot: Shot, index: int) -> void:
 		if cue_time > cursor:
 			cue_tween.tween_interval(cue_time - cursor)
 			cursor = cue_time
-		cue_tween.tween_callback(_fire_cue.bind(cue, index))
+		cue_tween.tween_callback(_fire_cue.bind(cue, index, shot))
 
 
 func _ordered_cues(shot: Shot, duration: float) -> Array[Cue]:
@@ -187,11 +189,19 @@ func _ordered_cues(shot: Shot, duration: float) -> Array[Cue]:
 	return ordered
 
 
-func _fire_cue(cue: Cue, shot_index: int) -> void:
+func _fire_cue(cue: Cue, shot_index: int, shot: Shot) -> void:
+	var event := CueEvent.new()
+	event.cue = cue
+	event.shot = shot
+	event.shot_index = shot_index
+	event.shot_duration = shot.get_safe_duration()
+	event.elapsed = clamp_cue_time(cue.time, event.shot_duration)
+	event.remaining = maxf(event.shot_duration - event.elapsed, 0.0)
 	cue_fired.emit(cue, shot_index)
+	cue_event_fired.emit(event)
 	var target := _resolve_cue_target(cue)
 	if target != null and target.has_method("on_cue"):
-		target.call("on_cue", cue)
+		target.call("on_cue", event)
 
 
 func _resolve_cue_target(cue: Cue) -> Node:

@@ -45,7 +45,10 @@ func _build_sequence() -> Sequence:
 	var opening := Shot.new()
 	opening.kind = Shot.Kind.HOLD
 	opening.duration = 1.2
-	opening.cues = [_make_cue(0.15, Cue.ACTION_LOWER_THIRD, "title: three features")]
+	opening.cues = [
+		_make_cue(0.1, Cue.ACTION_LOWER_THIRD, "title: three features"),
+		_caption_cue(0.3, "Three features. One take."),
+	]
 
 	var punch := Shot.new()
 	punch.kind = Shot.Kind.PUNCH_IN
@@ -55,8 +58,8 @@ func _build_sequence() -> Sequence:
 	punch.ease = Tween.EASE_OUT
 	punch.trans = Tween.TRANS_CUBIC
 	punch.cues = [
-		_make_cue(0.2, Cue.ACTION_CALLOUT, "callout: feature A"),
-		_make_cue(1.8, Cue.ACTION_CAPTION, "caption: fast and deterministic"),
+		_callout_cue(0.25, "CalloutA", "Feature A — crisp punch-in", "../../World/CardA", 1.8),
+		_caption_cue(1.3, "Fast, deterministic camera moves", "fade_up"),
 	]
 
 	var pan := Shot.new()
@@ -65,7 +68,9 @@ func _build_sequence() -> Sequence:
 	pan.duration = 2.2
 	pan.ease = Tween.EASE_IN_OUT
 	pan.trans = Tween.TRANS_SINE
-	pan.cues = [_make_cue(0.6, Cue.ACTION_CALLOUT, "callout: feature B")]
+	pan.cues = [
+		_callout_cue(0.5, "CalloutB", "Feature B — pan on rails", "../../World/CardB", 1.5),
+	]
 
 	var fit := Shot.new()
 	fit.kind = Shot.Kind.FIT_RECT
@@ -74,8 +79,8 @@ func _build_sequence() -> Sequence:
 	fit.ease = Tween.EASE_IN_OUT
 	fit.trans = Tween.TRANS_QUINT
 	fit.cues = [
-		_make_cue(0.0, Cue.ACTION_CAPTION, "caption: the whole feature grid"),
-		_make_cue(2.0, Cue.ACTION_CALLOUT, "callout: grid fits exactly"),
+		_caption_cue(0.1, "Every feature framed by one fit_rect", "slide_left"),
+		_callout_cue(1.1, "CalloutA", "Fit keeps the whole grid in frame", "../../World/CardC", 1.4),
 	]
 
 	var release := Shot.new()
@@ -84,7 +89,12 @@ func _build_sequence() -> Sequence:
 	release.duration = 2.4
 	release.ease = Tween.EASE_IN_OUT
 	release.trans = Tween.TRANS_CUBIC
-	release.cues = [_make_cue(0.4, Cue.ACTION_LOWER_THIRD, "title: outro")]
+	release.cues = [
+		_hide_callout_cue(0.1, "CalloutA"),
+		_hide_callout_cue(0.1, "CalloutB"),
+		_caption_cue(0.5, "Captions and callouts share the camera clock"),
+		_make_cue(1.2, Cue.ACTION_LOWER_THIRD, "title: outro"),
+	]
 
 	take.add_shot(opening)
 	take.add_shot(punch)
@@ -94,11 +104,46 @@ func _build_sequence() -> Sequence:
 	return take
 
 
-func _make_cue(time: float, action: StringName, note: String) -> Cue:
+func _make_cue(time: float, action: StringName, note: String, data: Dictionary = {}) -> Cue:
 	var cue := Cue.new()
 	cue.time = time
 	cue.action = action
-	cue.data = {"note": note}
+	var payload := data.duplicate()
+	payload["note"] = note
+	cue.data = payload
+	return cue
+
+
+func _caption_cue(time: float, text: String, caption_mode: String = "typewriter") -> Cue:
+	var cue := _make_cue(time, Cue.ACTION_CAPTION, text, {"text": text, "mode": caption_mode})
+	cue.target = NodePath("../HUD/Caption")
+	return cue
+
+
+func _callout_cue(
+	time: float,
+	target_name: String,
+	text: String,
+	anchor_path: String,
+	hold: float,
+	reveal: float = 0.3
+) -> Cue:
+	var cue := _make_cue(time, Cue.ACTION_CALLOUT, text, {
+		"text": text,
+		"anchor": NodePath(anchor_path),
+		"hold": hold,
+		"reveal": reveal,
+	})
+	cue.target = NodePath("../HUD/%s" % target_name)
+	return cue
+
+
+func _hide_callout_cue(time: float, target_name: String, duration: float = 0.2) -> Cue:
+	var cue := _make_cue(time, Cue.ACTION_CALLOUT, "hide %s" % target_name, {
+		"hide": true,
+		"duration": duration,
+	})
+	cue.target = NodePath("../HUD/%s" % target_name)
 	return cue
 
 

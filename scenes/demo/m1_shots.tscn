@@ -1,8 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://addons/explainer_studio/camera/explainer_camera.gd" id="1_camera"]
 [ext_resource type="Script" path="res://addons/explainer_studio/core/director.gd" id="2_director"]
 [ext_resource type="Script" path="res://scenes/demo/m1_demo.gd" id="3_demo"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/caption_revealer.gd" id="4_caption"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/callout.gd" id="5_callout"]
 
 [node name="M1Demo" type="Node2D"]
 script = ExtResource("3_demo")
@@ -111,4 +113,29 @@ offset_right = 1240.0
 offset_bottom = 700.0
 theme_override_colors/font_color = Color(0.564706, 0.6, 0.678431, 1)
 theme_override_font_sizes/font_size = 15
-text = "5 shots · hold → punch_in → pan → fit_rect → punch_out · cues print to the output log"
+text = "5 shots · hold → punch_in → pan → fit_rect → punch_out · captions and two callouts share the camera clock"
+
+[node name="Caption" type="Control" parent="HUD"]
+anchor_top = 0.74
+anchor_right = 1.0
+anchor_bottom = 0.9
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("4_caption")
+
+[node name="CalloutA" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_callout")
+
+[node name="CalloutB" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_callout")
