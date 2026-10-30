@@ -6,9 +6,10 @@ frame-accurate MP4 export.
 
 GDScript only. No C#, no shaders, no GDExtensions.
 
-> **Status: M1 complete.** Core runtime (Shot / Cue / Sequence / Director /
-> ExplainerCamera), demo scene and headless tests. UI sequencing (M2), VO (M3),
-> deterministic rendering (M4), editor dock (M5) and polish (M6) are next.
+> **Status: M3 complete.** Core runtime (Shot / Cue / Sequence / Director /
+> ExplainerCamera), UI sequencing (CaptionRevealer / Callout / LowerThird), VO
+> sync (VoiceOver / VoiceTrack, marker snapping), demo scene and headless tests.
+> Deterministic rendering (M4), editor dock (M5) and polish (M6) are next.
 
 ## Requirements
 
@@ -29,6 +30,11 @@ godot --headless --fixed-fps 60 --quit-after 800 scenes/demo/m1_shots.tscn
 godot --headless -s tests/test_director_sequence.gd
 godot --headless -s tests/test_cue_clamping.gd
 godot --headless -s tests/test_camera_kill_reset.gd
+godot --headless -s tests/test_caption_revealer.gd
+godot --headless -s tests/test_callout.gd
+godot --headless -s tests/test_lower_third.gd
+godot --headless -s tests/test_voice_over.gd
+godot --headless -s tests/test_marker_snapping.gd
 
 # Parse check (exit code 0 = clean)
 godot --headless --check-only --script addons/explainer_studio/core/shot.gd
@@ -60,6 +66,52 @@ director.camera = camera
 await director.play(sequence)        # waits for the whole take
 ```
 
+## UI sequencing (M2)
+
+UI receivers implement `on_cue(event: CueEvent)` and are targeted with `cue.target`.
+The Director hands each receiver the shot's remaining time, so reveals settle when
+the camera move does instead of running past the cut:
+
+| Receiver           | `action`      | `data` keys                                              |
+|--------------------|---------------|----------------------------------------------------------|
+| `CaptionRevealer`  | `caption`     | `text`, `mode`, `duration`, `hide`                       |
+| `Callout`          | `callout`     | `text`, `anchor`, `hold`, `reveal`, `duration`, `hide`   |
+| `LowerThird`       | `lower_third` | `title`, `subtitle`, `kicker`, `hold`, `reveal`, `duration`, `hide` |
+
+Omit `hold` to keep a card up until the shot ends; set `hold: 0` to leave it up
+until a later `hide` cue or a new cue on the same receiver.
+
+## Voice-over sync (M3)
+
+`VoiceOver` is an `AudioStreamPlayer` receiver. Cues use `action: voice_over` and
+target the player; `data` may carry a serialized `VoiceTrack` plus per-cue
+overrides:
+
+| Receiver     | `action`     | `data` keys                                                        |
+|--------------|--------------|--------------------------------------------------------------------|
+| `VoiceOver`  | `voice_over` | `stream`, `track`, `stream_path`/`path`, `volume_db`, `bus`, `fade_in`, `from`, `hide`/`stop`, `duration` |
+
+`VoiceTrack` (`.tres`-serializable) holds `stream`, `volume_db`, `bus`, `fade_in`,
+`fade_out` and `start_offset`. Precedence is per-cue `data` → track → player
+defaults. Narration deliberately outlives the shot that starts it, so a line can
+bridge a cut; send a `hide`/`stop` cue (with optional `duration`) to fade it out.
+
+Cues can snap to named sequence beats instead of using raw `time`:
+
+```gdscript
+sequence.add_marker("vo_hook", 1.8)        # absolute seconds in the sequence
+
+var cue := Cue.new()
+cue.action = Cue.ACTION_VOICE_OVER
+cue.marker = &"vo_hook"                    # Director resolves + clamps to the shot
+cue.target = NodePath("../VoiceOver")
+cue.data = {"track": my_voice_track}
+```
+
+`Sequence` also exposes `get_marker_names()`, `get_nearest_marker()`,
+`get_nearest_marker_time()`, `snap_to_marker()` and `remove_marker()` for the
+preview scrubber and the M5 dock. Unknown markers warn and fall back to `time`.
+
 ## Layout
 
 ```
@@ -72,7 +124,14 @@ addons/explainer_studio/
 │   └── director.gd               Plays a Sequence, fires cues, clamps times
 ├── camera/
 │   └── explainer_camera.gd       ExplainerCamera (Camera2D)
-├── ui/ audio/ render/ editor/    M2–M5 homes
+├── ui/
+│   ├── caption_revealer.gd       Typewriter / fade / slide captions
+│   ├── callout.gd                World-anchored annotation bubble
+│   └── lower_third.gd            Sliding title card
+├── audio/
+│   ├── voice_over.gd             Cue-driven narration player
+│   └── voice_track.gd            Serialized clip + mix settings
+├── render/ editor/               M4–M5 homes
 scenes/demo/m1_shots.tscn         Five-shot demo over placeholder art
 scenes/demo/m1_demo.gd            Builds the demo sequence, prints cues
 scripts/camera_2d.gd              Deprecated alias → ExplainerCamera

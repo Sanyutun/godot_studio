@@ -93,6 +93,58 @@ func get_marker_time(marker_name: String) -> float:
 	return -1.0
 
 
+## Names of all markers, in insertion order.
+func get_marker_names() -> PackedStringArray:
+	var names := PackedStringArray()
+	for marker: Dictionary in markers:
+		names.append(String(marker.get("name", "")))
+	return names
+
+
+## Marker dictionary nearest to [param time], or an empty dictionary when the
+## sequence has no markers.
+func get_nearest_marker(time: float) -> Dictionary:
+	var nearest: Dictionary = {}
+	var best_distance := INF
+	for marker: Dictionary in markers:
+		var distance := absf(float(marker.get("time", 0.0)) - time)
+		if distance < best_distance:
+			best_distance = distance
+			nearest = marker
+	return nearest
+
+
+## Time of the marker nearest to [param time], or [param fallback] when the
+## sequence has no markers.
+func get_nearest_marker_time(time: float, fallback: float = -1.0) -> float:
+	var nearest := get_nearest_marker(time)
+	if nearest.is_empty():
+		return fallback
+	return float(nearest.get("time", fallback))
+
+
+## Snaps [param time] to the nearest marker when it is within [param tolerance]
+## seconds. Returns [param time] unchanged when no marker is close enough.
+func snap_to_marker(time: float, tolerance: float = 0.25) -> float:
+	var nearest := get_nearest_marker(time)
+	if nearest.is_empty():
+		return time
+	var marker_time := float(nearest.get("time", time))
+	if absf(marker_time - time) <= maxf(tolerance, 0.0):
+		return marker_time
+	return time
+
+
+## Removes a named marker. Returns `true` when one was removed.
+func remove_marker(marker_name: String) -> bool:
+	for index in markers.size():
+		if String(markers[index].get("name", "")) == marker_name:
+			markers.remove_at(index)
+			_notify_changed()
+			return true
+	return false
+
+
 ## Removes every marker.
 func clear_markers() -> void:
 	markers.clear()
@@ -114,6 +166,11 @@ func validate() -> PackedStringArray:
 			for cue in shot.cues:
 				if cue == null:
 					issues.append("Shot %d has a null cue." % index)
+				elif not cue.marker.is_empty():
+					if not has_marker(cue.marker):
+						issues.append(
+							"Shot %d cue marker '%s' is not defined." % [index, cue.marker]
+						)
 				elif cue.time < 0.0 or cue.time > shot.duration:
 					issues.append(
 						"Shot %d cue at %.2fs is outside [0, %.2fs]; it will be clamped."

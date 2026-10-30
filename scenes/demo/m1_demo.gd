@@ -12,14 +12,17 @@ extends Node2D
 
 @onready var camera: ExplainerCamera = $ExplainerCamera
 @onready var director: Director = $Director
+@onready var voice: VoiceOver = $VoiceOver
 @onready var status_label: Label = $HUD/Status
 
 var _sequence: Sequence
 var _quit_on_finish: bool = false
+var _voice_blip: AudioStreamWAV
 
 
 func _ready() -> void:
 	_quit_on_finish = OS.get_cmdline_user_args().has("--quit-on-finish")
+	_voice_blip = _make_blip()
 	director.camera = camera
 	director.shot_started.connect(_on_shot_started)
 	director.shot_finished.connect(_on_shot_finished)
@@ -46,8 +49,9 @@ func _build_sequence() -> Sequence:
 	opening.kind = Shot.Kind.HOLD
 	opening.duration = 1.2
 	opening.cues = [
-		_make_cue(0.1, Cue.ACTION_LOWER_THIRD, "title: three features"),
+		_lower_third_cue(0.1, "Three features", "One take, one clock", "M2 · UI sequencing"),
 		_caption_cue(0.3, "Three features. One take."),
+		_voice_cue(0.2, &"vo_intro", "intro sting"),
 	]
 
 	var punch := Shot.new()
@@ -60,6 +64,7 @@ func _build_sequence() -> Sequence:
 	punch.cues = [
 		_callout_cue(0.25, "CalloutA", "Feature A — crisp punch-in", "../../World/CardA", 1.8),
 		_caption_cue(1.3, "Fast, deterministic camera moves", "fade_up"),
+		_voice_cue(0.6, &"vo_punch", "punch beat"),
 	]
 
 	var pan := Shot.new()
@@ -70,6 +75,7 @@ func _build_sequence() -> Sequence:
 	pan.trans = Tween.TRANS_SINE
 	pan.cues = [
 		_callout_cue(0.5, "CalloutB", "Feature B — pan on rails", "../../World/CardB", 1.5),
+		_voice_cue(0.6, &"vo_pan", "pan beat"),
 	]
 
 	var fit := Shot.new()
@@ -81,6 +87,7 @@ func _build_sequence() -> Sequence:
 	fit.cues = [
 		_caption_cue(0.1, "Every feature framed by one fit_rect", "slide_left"),
 		_callout_cue(1.1, "CalloutA", "Fit keeps the whole grid in frame", "../../World/CardC", 1.4),
+		_voice_cue(0.6, &"vo_fit", "fit beat"),
 	]
 
 	var release := Shot.new()
@@ -93,8 +100,15 @@ func _build_sequence() -> Sequence:
 		_hide_callout_cue(0.1, "CalloutA"),
 		_hide_callout_cue(0.1, "CalloutB"),
 		_caption_cue(0.5, "Captions and callouts share the camera clock"),
-		_make_cue(1.2, Cue.ACTION_LOWER_THIRD, "title: outro"),
+		_lower_third_cue(1.2, "Explainer Studio", "Captions · callouts · lower thirds", "M2 · outro"),
+		_voice_cue(0.8, &"vo_outro", "outro beat"),
 	]
+
+	take.add_marker("vo_intro", 0.2)
+	take.add_marker("vo_punch", 1.8)
+	take.add_marker("vo_pan", 4.0)
+	take.add_marker("vo_fit", 6.2)
+	take.add_marker("vo_outro", 9.2)
 
 	take.add_shot(opening)
 	take.add_shot(punch)
@@ -138,6 +152,21 @@ func _callout_cue(
 	return cue
 
 
+func _lower_third_cue(
+	time: float,
+	title: String,
+	subtitle: String,
+	kicker: String = "",
+	hold: float = -1.0
+) -> Cue:
+	var payload := {"title": title, "subtitle": subtitle, "kicker": kicker}
+	if hold >= 0.0:
+		payload["hold"] = hold
+	var cue := _make_cue(time, Cue.ACTION_LOWER_THIRD, title, payload)
+	cue.target = NodePath("../HUD/LowerThird")
+	return cue
+
+
 func _hide_callout_cue(time: float, target_name: String, duration: float = 0.2) -> Cue:
 	var cue := _make_cue(time, Cue.ACTION_CALLOUT, "hide %s" % target_name, {
 		"hide": true,
@@ -145,6 +174,42 @@ func _hide_callout_cue(time: float, target_name: String, duration: float = 0.2) 
 	})
 	cue.target = NodePath("../HUD/%s" % target_name)
 	return cue
+
+
+func _voice_cue(time: float, marker: StringName, note: String) -> Cue:
+	# `time` is the fallback; a valid marker retimes the cue to the sequence beat.
+	var cue := _make_cue(time, Cue.ACTION_VOICE_OVER, note, {
+		"stream": _voice_blip,
+		"volume_db": -6.0,
+		"fade_in": 0.02,
+	})
+	cue.marker = marker
+	cue.target = NodePath("../VoiceOver")
+	return cue
+
+
+func _make_blip(frequency: float = 440.0, length: float = 0.18, gain: float = 0.16) -> AudioStreamWAV:
+	# Placeholder narration: a short, click-free sine blip generated at runtime so
+	# the demo stays self-contained (no binary audio assets in the repo).
+	const MIX_RATE := 44100
+	var frames := maxi(int(ceil(length * MIX_RATE)), 1)
+	var attack := maxi(int(MIX_RATE * 0.012), 1)
+	var data := PackedByteArray()
+	data.resize(frames * 2)
+	for frame in frames:
+		var envelope := 1.0
+		if frame < attack:
+			envelope = float(frame) / float(attack)
+		elif frame >= frames - attack:
+			envelope = float(frames - frame) / float(attack)
+		var sample := sin(TAU * frequency * float(frame) / MIX_RATE) * gain * envelope
+		data.encode_s16(frame * 2, int(clampf(sample, -1.0, 1.0) * 32767.0))
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = MIX_RATE
+	stream.stereo = false
+	stream.data = data
+	return stream
 
 
 func _on_shot_started(index: int, shot: Shot) -> void:
@@ -167,6 +232,10 @@ func _on_sequence_finished(finished_sequence: Sequence) -> void:
 	print("[M1] sequence finished: %s (%.2fs)" % [finished_sequence.display_name, finished_sequence.get_total_duration()])
 	status_label.text = "Take complete · %.1fs" % finished_sequence.get_total_duration()
 	if _quit_on_finish:
+		voice.stop_voice(0.0)
+		# Give the audio server one frame to release the playback before quitting.
+		await get_tree().process_frame
+		voice.stream = null
 		get_tree().quit()
 		return
 	if loop:

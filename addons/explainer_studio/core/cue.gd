@@ -13,10 +13,18 @@ const ACTION_CAPTION: StringName = &"caption"
 const ACTION_CALLOUT: StringName = &"callout"
 ## Title card. See `ui/lower_third.gd` (M2).
 const ACTION_LOWER_THIRD: StringName = &"lower_third"
+## Voice-over / narration clip. See `audio/voice_over.gd` (M3).
+const ACTION_VOICE_OVER: StringName = &"voice_over"
 
 ## Time in seconds, relative to the start of the owning shot.
 @export_range(0.0, 600.0, 0.01, "or_greater", "suffix:s")
 var time: float = 0.0
+
+## Optional named [Sequence] marker. When set, the [Director] resolves the
+## marker's absolute sequence time into this shot and uses it instead of
+## [member time] (M3 VO beat snapping). Unknown markers fall back to
+## [member time] with a warning.
+@export var marker: StringName = &""
 
 ## Action name. Use the `ACTION_*` constants or any custom string.
 @export var action: StringName = ACTION_CAPTION
@@ -36,4 +44,4 @@ func get_data(key: String, default_value: Variant = null) -> Variant:
 
 ## Whether [member action] is one of the built-in explainer actions.
 func is_known_action() -> bool:
-	return action in [ACTION_CAPTION, ACTION_CALLOUT, ACTION_LOWER_THIRD]
+	return action in [ACTION_CAPTION, ACTION_CALLOUT, ACTION_LOWER_THIRD, ACTION_VOICE_OVER]

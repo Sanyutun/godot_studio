@@ -9,6 +9,8 @@ extends Node
 ##
 ## Cue times are clamped to `[0, shot.duration]` and scheduled on a tween that
 ## starts with the camera shot, so UI lands on the same clock as the move (M2).
+## A cue with [member Cue.marker] set resolves to the named [Sequence] marker's
+## absolute time instead of [member Cue.time] (M3 VO beat snapping).
 
 signal sequence_started(sequence: Sequence)
 signal sequence_finished(sequence: Sequence)
@@ -126,6 +128,16 @@ func get_shot_start_time(index: int) -> float:
 	return _sequence.get_shot_start_time(index)
 
 
+## Resolves [param cue] to shot-relative seconds using the active sequence's
+## markers. Useful for preview scrubbers and the editor dock.
+func resolve_cue_time(cue: Cue, shot_index: int) -> float:
+	if cue == null:
+		return 0.0
+	if _sequence == null or shot_index < 0 or shot_index >= _sequence.shots.size():
+		return maxf(cue.time, 0.0)
+	return _resolve_cue_time(cue, shot_index, _sequence.shots[shot_index].get_safe_duration())
+
+
 ## Clamps a cue time into a shot's bounds. Exposed for the dock and tests.
 static func clamp_cue_time(time: float, duration: float) -> float:
 	return clampf(time, 0.0, maxf(duration, 0.0))
@@ -161,7 +173,7 @@ func _schedule_cues(shot: Shot, index: int) -> void:
 		return
 
 	var duration := shot.get_safe_duration()
-	var ordered := _ordered_cues(shot, duration)
+	var ordered := _ordered_cues(shot, index, duration)
 	if ordered.is_empty():
 		return
 
@@ -170,32 +182,48 @@ func _schedule_cues(shot: Shot, index: int) -> void:
 	_cue_tween = cue_tween
 	var cursor := 0.0
 	for cue in ordered:
-		var cue_time := clamp_cue_time(cue.time, duration)
+		var cue_time := _resolve_cue_time(cue, index, duration)
 		if cue_time > cursor:
 			cue_tween.tween_interval(cue_time - cursor)
 			cursor = cue_time
-		cue_tween.tween_callback(_fire_cue.bind(cue, index, shot))
+		cue_tween.tween_callback(_fire_cue.bind(cue, index, shot, cue_time))
 
 
-func _ordered_cues(shot: Shot, duration: float) -> Array[Cue]:
+func _ordered_cues(shot: Shot, shot_index: int, duration: float) -> Array[Cue]:
 	var ordered: Array[Cue] = []
 	for cue in shot.cues:
 		if cue != null:
 			ordered.append(cue)
 	ordered.sort_custom(
 		func(a: Cue, b: Cue) -> bool:
-			return clamp_cue_time(a.time, duration) < clamp_cue_time(b.time, duration)
+			return (
+				_resolve_cue_time(a, shot_index, duration)
+				< _resolve_cue_time(b, shot_index, duration)
+			)
 	)
 	return ordered
 
 
-func _fire_cue(cue: Cue, shot_index: int, shot: Shot) -> void:
+func _resolve_cue_time(cue: Cue, shot_index: int, duration: float) -> float:
+	var cue_time := cue.time
+	if not cue.marker.is_empty() and _sequence != null:
+		var marker_time := _sequence.get_marker_time(cue.marker)
+		if marker_time >= 0.0:
+			cue_time = marker_time - _sequence.get_shot_start_time(shot_index)
+		else:
+			push_warning(
+				"Director: cue marker '%s' not found; using cue.time." % cue.marker
+			)
+	return clamp_cue_time(cue_time, duration)
+
+
+func _fire_cue(cue: Cue, shot_index: int, shot: Shot, cue_time: float) -> void:
 	var event := CueEvent.new()
 	event.cue = cue
 	event.shot = shot
 	event.shot_index = shot_index
 	event.shot_duration = shot.get_safe_duration()
-	event.elapsed = clamp_cue_time(cue.time, event.shot_duration)
+	event.elapsed = clamp_cue_time(cue_time, event.shot_duration)
 	event.remaining = maxf(event.shot_duration - event.elapsed, 0.0)
 	cue_fired.emit(cue, shot_index)
 	cue_event_fired.emit(event)
