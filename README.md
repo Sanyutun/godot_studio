@@ -24,7 +24,12 @@ GDScript only. No C#, no shaders, no GDExtensions.
 # Windowed demo (10.8 s, five shots, loops)
 godot scenes/demo/m1_shots.tscn
 
-# Headless demo: fixed 60 fps, 800 frames (~13.3 s), grep for errors
+# Headless demo, real-time: plays the full take then exits cleanly
+godot --headless scenes/demo/m1_shots.tscn -- --quit-on-finish
+
+# Headless demo at a fixed 60 fps: fast, but the dummy audio driver cannot
+# advance playback, so Godot reports leaked AudioStreamPlayback instances at
+# exit. Treat that specific line as an engine artifact, not add-on state.
 godot --headless --fixed-fps 60 --quit-after 800 scenes/demo/m1_shots.tscn
 
 # Deterministic MP4 (needs ffmpeg on PATH; use xvfb-run on headless Linux)
