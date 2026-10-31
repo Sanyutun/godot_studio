@@ -151,6 +151,13 @@ func clear_markers() -> void:
 	_notify_changed()
 
 
+## Notifies listeners after a field was changed directly by authoring code.
+## The editor dock calls this after inspector edits so `sequence_changed` and
+## [signal Resource.changed] stay in sync with `.tres` saves and undo entries.
+func mark_changed() -> void:
+	_notify_changed()
+
+
 ## Authoring sanity checks. Returns human readable issues; empty means clean.
 func validate() -> PackedStringArray:
 	var issues := PackedStringArray()
