@@ -17,11 +17,14 @@ extends Node2D
 
 var _sequence: Sequence
 var _quit_on_finish: bool = false
+var _render_requested: bool = false
 var _voice_blip: AudioStreamWAV
 
 
 func _ready() -> void:
-	_quit_on_finish = OS.get_cmdline_user_args().has("--quit-on-finish")
+	var user_args := OS.get_cmdline_user_args()
+	_quit_on_finish = user_args.has("--quit-on-finish")
+	_render_requested = user_args.has("--render")
 	_voice_blip = _make_blip()
 	director.camera = camera
 	director.shot_started.connect(_on_shot_started)
@@ -37,8 +40,62 @@ func _ready() -> void:
 		"[M1] '%s': %d shots, %.2fs total"
 		% [_sequence.display_name, _sequence.shots.size(), _sequence.get_total_duration()]
 	)
+	if _render_requested:
+		_render_take(user_args)
+		return
 	if autoplay:
 		director.play(_sequence)
+
+
+## Captures the demo sequence frame by frame and encodes it with ffmpeg (M4).
+##
+## Run with a fixed timestep so the capture is deterministic:
+## `godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render`.
+func _render_take(user_args: PackedStringArray) -> void:
+	var render_settings := RenderSettings.new()
+	render_settings.output_path = _user_arg(
+		user_args, "--out", "user://explainer_render/m1_demo.mp4"
+	)
+	render_settings.fps = int(_user_arg(user_args, "--fps", "60"))
+	render_settings.keep_frames = user_args.has("--keep-frames")
+	var audio_path := _user_arg(user_args, "--audio", "")
+	if not audio_path.is_empty():
+		render_settings.audio_path = audio_path
+	var size_text := _user_arg(user_args, "--size", "")
+	if not size_text.is_empty():
+		var parts := size_text.split("x")
+		if parts.size() == 2:
+			render_settings.resolution = Vector2i(int(parts[0]), int(parts[1]))
+		else:
+			push_warning("[M4] --size expects WIDTHxHEIGHT; using the viewport size.")
+
+	var renderer := FrameRenderer.new()
+	renderer.name = "FrameRenderer"
+	renderer.director = director
+	renderer.capture_viewport = get_viewport()
+	add_child(renderer)
+	print(
+		"[M4] rendering '%s' at %d fps / %d frames → %s"
+		% [
+			_sequence.display_name,
+			render_settings.fps,
+			render_settings.get_frame_count(_sequence.get_total_duration()),
+			render_settings.output_path,
+		]
+	)
+	var ok := await renderer.render(_sequence, render_settings)
+	if ok:
+		print("[M4] wrote %s" % render_settings.get_resolved_output_path())
+	else:
+		printerr("[M4] render failed: %s" % renderer.get_last_error())
+	get_tree().quit(0 if ok else 1)
+
+
+func _user_arg(user_args: PackedStringArray, flag: String, fallback: String) -> String:
+	var index := user_args.find(flag)
+	if index >= 0 and index + 1 < user_args.size():
+		return user_args[index + 1]
+	return fallback
 
 
 func _build_sequence() -> Sequence:
@@ -231,6 +288,8 @@ func _on_cue_fired(cue: Cue, shot_index: int) -> void:
 func _on_sequence_finished(finished_sequence: Sequence) -> void:
 	print("[M1] sequence finished: %s (%.2fs)" % [finished_sequence.display_name, finished_sequence.get_total_duration()])
 	status_label.text = "Take complete · %.1fs" % finished_sequence.get_total_duration()
+	if _render_requested:
+		return
 	if _quit_on_finish:
 		voice.stop_voice(0.0)
 		# Give the audio server one frame to release the playback before quitting.

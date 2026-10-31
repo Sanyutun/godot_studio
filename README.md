@@ -6,10 +6,11 @@ frame-accurate MP4 export.
 
 GDScript only. No C#, no shaders, no GDExtensions.
 
-> **Status: M3 complete.** Core runtime (Shot / Cue / Sequence / Director /
+> **Status: M4 complete.** Core runtime (Shot / Cue / Sequence / Director /
 > ExplainerCamera), UI sequencing (CaptionRevealer / Callout / LowerThird), VO
-> sync (VoiceOver / VoiceTrack, marker snapping), demo scene and headless tests.
-> Deterministic rendering (M4), editor dock (M5) and polish (M6) are next.
+> sync (VoiceOver / VoiceTrack, marker snapping), deterministic frame rendering
+> (RenderSettings / FrameRenderer / FfmpegEncoder), demo scene and headless
+> tests. The editor dock (M5) and polish (M6) are next.
 
 ## Requirements
 
@@ -26,6 +27,9 @@ godot scenes/demo/m1_shots.tscn
 # Headless demo: fixed 60 fps, 800 frames (~13.3 s), grep for errors
 godot --headless --fixed-fps 60 --quit-after 800 scenes/demo/m1_shots.tscn
 
+# Deterministic MP4 (needs ffmpeg on PATH; use xvfb-run on headless Linux)
+godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render --out user://m1_demo.mp4
+
 # Headless tests
 godot --headless -s tests/test_director_sequence.gd
 godot --headless -s tests/test_cue_clamping.gd
@@ -35,6 +39,9 @@ godot --headless -s tests/test_callout.gd
 godot --headless -s tests/test_lower_third.gd
 godot --headless -s tests/test_voice_over.gd
 godot --headless -s tests/test_marker_snapping.gd
+godot --headless -s tests/test_render_settings.gd
+godot --headless -s tests/test_ffmpeg_encoder.gd
+godot --headless -s tests/test_frame_renderer.gd
 
 # Parse check (exit code 0 = clean)
 godot --headless --check-only --script addons/explainer_studio/core/shot.gd
@@ -112,6 +119,48 @@ cue.data = {"track": my_voice_track}
 `get_nearest_marker_time()`, `snap_to_marker()` and `remove_marker()` for the
 preview scrubber and the M5 dock. Unknown markers warn and fall back to `time`.
 
+## Deterministic rendering (M4)
+
+`RenderSettings` is the serializable render profile. `FrameRenderer` starts the
+sequence, captures one viewport image per frame, and `FfmpegEncoder` muxes the
+PNG sequence into an MP4:
+
+```gdscript
+var settings := RenderSettings.new()
+settings.output_path = "user://renders/intro.mp4"
+settings.fps = 60
+settings.resolution = Vector2i(1920, 1080)   # (0, 0) keeps the viewport size
+settings.crf = 18
+settings.audio_path = "user://renders/narration.wav"  # optional pre-mixed track
+
+var renderer := FrameRenderer.new()
+add_child(renderer)
+renderer.director = director
+var ok := await renderer.render(sequence, settings)
+```
+
+Capture is only deterministic when the engine advances by a fixed timestep, so
+run with `--fixed-fps` matching `settings.fps`:
+
+```powershell
+godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render --out user://m1_demo.mp4
+# Optional: --size 1920x1080 --fps 60 --keep-frames --audio narration.wav
+```
+
+`--render` replaces the normal demo loop, exits 0 on success, and prints the
+resolved output path. On headless Linux wrap the command in `xvfb-run`; the
+dummy `--headless` renderer cannot read viewport textures.
+
+Frames live in `frames_dir` (derived as `<output>_frames` when empty), are
+cleared before a render, kept when ffmpeg fails, and removed after a successful
+encode unless `keep_frames` is set. `get_frame_count()`, `get_frame_time()`,
+frame naming, validation and ffmpeg argument building are plain functions, which
+keeps the headless tests fast and ffmpeg-free.
+
+Audio: M4 muxes an already-mixed file through `audio_path` and pads short tracks
+with silence so the picture keeps its full length (`-af apad -shortest`). The
+[VoiceOver] player is real-time; offline VO capture/mixing is polished in M6.
+
 ## Layout
 
 ```
@@ -131,7 +180,11 @@ addons/explainer_studio/
 ├── audio/
 │   ├── voice_over.gd             Cue-driven narration player
 │   └── voice_track.gd            Serialized clip + mix settings
-├── render/ editor/               M4–M5 homes
+├── render/
+│   ├── render_settings.gd        Render profile, frame math, ffmpeg args
+│   ├── frame_renderer.gd         Fixed-step capture loop and cleanup
+│   └── ffmpeg_encoder.gd         Process runner + result metadata
+├── editor/                       M5 home
 scenes/demo/m1_shots.tscn         Five-shot demo over placeholder art
 scenes/demo/m1_demo.gd            Builds the demo sequence, prints cues
 scripts/camera_2d.gd              Deprecated alias → ExplainerCamera
@@ -172,6 +225,7 @@ must keep playing after its camera tween is killed.
 ## Design rules
 
 - Smoothing uses `1 - exp(-speed * delta)`; timing uses Tweens/timers.
+- Renders assume `--fixed-fps`; capture never uses wall-clock waits.
 - No `process()` polling, no autoload singletons.
 - Typed GDScript, `@export_range` with units in doc comments.
 - UI/render/editor talk to `Director` and `Cue` only — never to the camera.
