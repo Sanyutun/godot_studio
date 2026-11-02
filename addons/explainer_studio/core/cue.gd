@@ -11,7 +11,7 @@ extends Resource
 const ACTION_CAPTION: StringName = &"caption"
 ## World-anchored annotation bubble. See `ui/callout.gd` (M2).
 const ACTION_CALLOUT: StringName = &"callout"
-## Title card. See `ui/lower_third.gd` (M2).
+## Title card. See `ui/lower_third.gd` (M3).
 const ACTION_LOWER_THIRD: StringName = &"lower_third"
 ## Voice-over / narration clip. See `audio/voice_over.gd` (M3).
 const ACTION_VOICE_OVER: StringName = &"voice_over"

@@ -1,5 +1,6 @@
 extends Node2D
-## M1 demo: a five-shot sequence over placeholder art.
+## Demo: a five-shot sequence over placeholder art, with captions, callouts,
+## lower thirds and voice-over wired through the [Director].
 ##
 ## Run windowed:   godot scenes/demo/m1_shots.tscn
 ## Run headless:   godot --headless scenes/demo/m1_shots.tscn --quit-after 800
@@ -35,9 +36,9 @@ func _ready() -> void:
 	_sequence = _build_sequence()
 	var issues := _sequence.validate()
 	for issue in issues:
-		push_warning("[M1] %s" % issue)
+		push_warning("[demo] %s" % issue)
 	print(
-		"[M1] '%s': %d shots, %.2fs total"
+		"[demo] '%s': %d shots, %.2fs total"
 		% [_sequence.display_name, _sequence.shots.size(), _sequence.get_total_duration()]
 	)
 	if _render_requested:
@@ -100,13 +101,13 @@ func _user_arg(user_args: PackedStringArray, flag: String, fallback: String) -> 
 
 func _build_sequence() -> Sequence:
 	var take := Sequence.new()
-	take.display_name = "M1 · five-shot tour"
+	take.display_name = "demo · five-shot tour"
 
 	var opening := Shot.new()
 	opening.kind = Shot.Kind.HOLD
 	opening.duration = 1.2
 	opening.cues = [
-		_lower_third_cue(0.1, "Three features", "One take, one clock", "M2 · UI sequencing"),
+		_lower_third_cue(0.1, "Three features", "One take, one clock", "M2–M3 · UI on the clock"),
 		_caption_cue(0.3, "Three features. One take."),
 		_voice_cue(0.2, &"vo_intro", "intro sting"),
 	]
@@ -273,20 +274,20 @@ func _on_shot_started(index: int, shot: Shot) -> void:
 	status_label.text = "Shot %d/%d · %s · %.1fs" % [
 		index + 1, _sequence.shots.size(), shot.get_kind_name(), shot.duration,
 	]
-	print("[M1] shot %d/%d start: %s (%.1fs)" % [index + 1, _sequence.shots.size(), shot.get_kind_name(), shot.duration])
+	print("[demo] shot %d/%d start: %s (%.1fs)" % [index + 1, _sequence.shots.size(), shot.get_kind_name(), shot.duration])
 
 
 func _on_shot_finished(index: int, shot: Shot) -> void:
 	var elapsed := _sequence.get_shot_start_time(index) + shot.duration
-	print("[M1] shot %d done at %05.2fs" % [index + 1, elapsed])
+	print("[demo] shot %d done at %05.2fs" % [index + 1, elapsed])
 
 
 func _on_cue_fired(cue: Cue, shot_index: int) -> void:
-	print("[M1] cue '%s' @ shot %d: %s" % [cue.action, shot_index, cue.get_data("note", "")])
+	print("[demo] cue '%s' @ shot %d: %s" % [cue.action, shot_index, cue.get_data("note", "")])
 
 
 func _on_sequence_finished(finished_sequence: Sequence) -> void:
-	print("[M1] sequence finished: %s (%.2fs)" % [finished_sequence.display_name, finished_sequence.get_total_duration()])
+	print("[demo] sequence finished: %s (%.2fs)" % [finished_sequence.display_name, finished_sequence.get_total_duration()])
 	status_label.text = "Take complete · %.1fs" % finished_sequence.get_total_duration()
 	if _render_requested:
 		return

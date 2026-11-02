@@ -35,7 +35,8 @@ godot --headless --fixed-fps 60 --quit-after 800 scenes/demo/m1_shots.tscn
 # Deterministic MP4 (needs ffmpeg on PATH; use xvfb-run on headless Linux)
 godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render --out user://m1_demo.mp4
 
-# Headless tests
+# Headless tests — refresh the class cache first when scripts were added/changed
+godot --headless --import
 godot --headless -s tests/test_director_sequence.gd
 godot --headless -s tests/test_cue_clamping.gd
 godot --headless -s tests/test_camera_kill_reset.gd
@@ -78,7 +79,7 @@ director.camera = camera
 await director.play(sequence)        # waits for the whole take
 ```
 
-## UI sequencing (M2)
+## UI sequencing (M2–M3)
 
 UI receivers implement `on_cue(event: CueEvent)` and are targeted with `cue.target`.
 The Director hands each receiver the shot's remaining time, so reveals settle when
@@ -87,11 +88,13 @@ the camera move does instead of running past the cut:
 | Receiver           | `action`      | `data` keys                                              |
 |--------------------|---------------|----------------------------------------------------------|
 | `CaptionRevealer`  | `caption`     | `text`, `mode`, `duration`, `hide`                       |
-| `Callout`          | `callout`     | `text`, `anchor`, `hold`, `reveal`, `duration`, `hide`   |
-| `LowerThird`       | `lower_third` | `title`, `subtitle`, `kicker`, `hold`, `reveal`, `duration`, `hide` |
+| `Callout`          | `callout`     | `text`, `anchor`, `hold`, `reveal`, `dismiss`, `duration`, `hide` |
+| `LowerThird`       | `lower_third` | `title`, `subtitle`, `kicker`, `hold`, `reveal`, `dismiss`, `duration`, `hide` |
 
-Omit `hold` to keep a card up until the shot ends; set `hold: 0` to leave it up
-until a later `hide` cue or a new cue on the same receiver.
+Omit `hold` to keep a card up until the shot ends; cue lifetimes are clamped so
+reveal + hold + fade-out fits the shot's remaining budget. Use a later `hide` cue
+to dismiss early. Calling `show_*()` directly keeps a `hold` of `0` up until the
+next cue or an explicit hide.
 
 ## Voice-over sync (M3)
 
@@ -105,8 +108,10 @@ overrides:
 
 `VoiceTrack` (`.tres`-serializable) holds `stream`, `volume_db`, `bus`, `fade_in`,
 `fade_out` and `start_offset`. Precedence is per-cue `data` → track → player
-defaults. Narration deliberately outlives the shot that starts it, so a line can
-bridge a cut; send a `hide`/`stop` cue (with optional `duration`) to fade it out.
+defaults. A hide cue's optional `duration` wins over `VoiceTrack.fade_out`; without
+it, `stop_voice()` uses the track's `fade_out`, then the player's
+`fade_out_duration`. Narration deliberately outlives the shot that starts it, so a
+line can bridge a cut; send a `hide`/`stop` cue to fade it out.
 
 Cues can snap to named sequence beats instead of using raw `time`:
 
