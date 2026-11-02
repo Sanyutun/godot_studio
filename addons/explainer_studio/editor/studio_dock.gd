@@ -11,6 +11,8 @@ extends MarginContainer
 const PreviewScrubber := preload("res://addons/explainer_studio/editor/preview_scrubber.gd")
 const VERSION := "0.5.0"
 
+## Must stay in [enum Shot.Kind] order: the OptionButton index is written
+## straight into `Shot.kind`.
 const KIND_NAMES: Array[String] = [
 	"move", "punch_in", "punch_out", "pan", "fit_rect", "drift", "hold",
 ]
@@ -459,9 +461,12 @@ func _on_cue_selected(index: int) -> void:
 func _on_marker_selected(index: int) -> void:
 	if _refreshing or _marker_list.get_item_metadata(index) == null:
 		return
-	_marker_name.text = String(_marker_list.get_item_metadata(index))
+	var marker_name := _string_of(_marker_list.get_item_metadata(index))
+	_marker_name.text = marker_name
 	if _model.sequence != null:
-		_marker_time.value = _model.sequence.get_marker_time(_marker_name.text)
+		var marker_time := _model.sequence.get_marker_time(marker_name)
+		if marker_time >= 0.0:
+			_marker_time.value = marker_time
 
 
 func _add_shot() -> void:
@@ -642,10 +647,11 @@ func _on_cue_action_selected(index: int) -> void:
 		return
 	var cue := _model.get_selected_cue()
 	if cue != null:
-		_ensure_option_item(_cue_action, StringName(_cue_action.get_item_text(index)))
-		_push_property_edit(
-			cue, "action", StringName(_cue_action.get_item_text(index)), "Set Cue Action"
-		)
+		# OptionButton text comes back as StringName; String() on one yields a
+		# "@godot..." placeholder, so convert with ascii_to_ustring().
+		var action := StringName(_cue_action.get_item_text(index))
+		_ensure_option_item(_cue_action, action)
+		_push_property_edit(cue, "action", action, "Set Cue Action")
 
 
 func _on_cue_time_changed(value: float) -> void:
@@ -662,8 +668,8 @@ func _on_cue_marker_selected(index: int) -> void:
 	var cue := _model.get_selected_cue()
 	if cue == null:
 		return
-	var marker := StringName(String(_cue_marker.get_item_metadata(index)))
-	_push_property_edit(cue, "marker", marker, "Set Cue Marker")
+	var marker := _string_of(_cue_marker.get_item_metadata(index))
+	_push_property_edit(cue, "marker", StringName(marker), "Set Cue Marker")
 
 
 func _commit_cue_target(_text: String = "") -> void:
