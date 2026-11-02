@@ -1186,3 +1186,9 @@ func _find_option_index(option: OptionButton, value: StringName) -> int:
 		if StringName(option.get_item_text(index)) == value:
 			return index
 	return -1
+
+
+func _string_of(value: Variant) -> String:
+	if value == null:
+		return ""
+	return String(value)
