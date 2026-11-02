@@ -5,7 +5,7 @@ extends RefCounted
 ##
 ## The [Director] builds one per fired cue. [member remaining] is the budget left
 ## in the shot, so UI can animate on the same clock as the camera and settle
-## exactly when the move does (M2 sequencing rule).
+## exactly when the move does (M2–M3 sequencing rule).
 
 ## The authored cue.
 var cue: Cue
@@ -39,3 +39,23 @@ func get_budget(requested: float) -> float:
 	if requested < 0.0:
 		return remaining
 	return minf(requested, remaining)
+
+
+## Resolves the full reveal/hold/dismiss lifetime for a UI cue so the card is
+## gone when the camera settles.
+##
+## Returns a [Dictionary] with `reveal`, `hold` and `dismiss` in seconds.
+## Cue `data` keys `reveal`, `hold` and `dismiss` override the receiver defaults;
+## a missing `hold` runs up to the dismiss window. Reveal is clamped to
+## [member remaining], then dismiss is clamped to whatever is left, and hold
+## fills the rest.
+func get_lifetime(reveal_default: float, dismiss_default: float) -> Dictionary:
+	var budget := maxf(remaining, 0.0)
+	var reveal := clampf(float(get_data("reveal", reveal_default)), 0.0, budget)
+	var dismiss := clampf(
+		float(get_data("dismiss", dismiss_default)), 0.0, maxf(budget - reveal, 0.0)
+	)
+	var hold := clampf(
+		float(get_data("hold", budget)), reveal, maxf(budget - dismiss, reveal)
+	)
+	return {"reveal": reveal, "hold": hold, "dismiss": dismiss}

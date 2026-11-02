@@ -4,8 +4,45 @@ extends "res://tests/support/test_case.gd"
 
 func _run_tests() -> void:
 	_check_static_clamp()
+	_check_lifetime_budget()
 	await _check_runtime_clamp()
 	finish()
+
+
+func _check_lifetime_budget() -> void:
+	var cue := Cue.new()
+	var event := CueEvent.new()
+	event.cue = cue
+	event.remaining = 1.0
+
+	var lifetime := event.get_lifetime(0.2, 0.1)
+	check_approx(float(lifetime["reveal"]), 0.2, 0.0001, "lifetime uses the reveal default")
+	check_approx(float(lifetime["dismiss"]), 0.1, 0.0001, "lifetime uses the dismiss default")
+	check_approx(float(lifetime["hold"]), 0.9, 0.0001, "hold runs until the dismiss window")
+
+	event.remaining = 0.2
+	lifetime = event.get_lifetime(0.5, 0.5)
+	check_approx(float(lifetime["reveal"]), 0.2, 0.0001, "reveal clamps to the budget")
+	check_approx(float(lifetime["dismiss"]), 0.0, 0.0001, "dismiss gets no time after reveal")
+	check_approx(float(lifetime["hold"]), 0.2, 0.0001, "hold clamps to the budget")
+
+	event.remaining = 1.0
+	cue.data = {"reveal": 0.1, "dismiss": 0.05, "hold": 0.5}
+	lifetime = event.get_lifetime(0.3, 0.2)
+	check_approx(float(lifetime["reveal"]), 0.1, 0.0001, "cue reveal overrides the default")
+	check_approx(float(lifetime["dismiss"]), 0.05, 0.0001, "cue dismiss overrides the default")
+	check_approx(float(lifetime["hold"]), 0.5, 0.0001, "cue hold overrides the default")
+
+	cue.data = {"hold": 5.0}
+	lifetime = event.get_lifetime(0.2, 0.1)
+	check_approx(
+		float(lifetime["hold"]), 0.9, 0.0001, "hold clamps to budget minus dismiss"
+	)
+
+	event.remaining = -1.0
+	lifetime = event.get_lifetime(0.2, 0.1)
+	for key in ["reveal", "hold", "dismiss"]:
+		check_approx(float(lifetime[key]), 0.0, 0.0001, "negative remaining zeroes %s" % key)
 
 
 func _check_static_clamp() -> void:

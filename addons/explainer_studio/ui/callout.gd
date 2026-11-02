@@ -75,6 +75,7 @@ var _anchor_initialized: bool = false
 var _visible_state: bool = false
 var _tween: Tween = null
 var _pending_dismiss: float = -1.0
+var _pending_trans: Tween.TransitionType = Tween.TRANS_CUBIC
 
 
 func _ready() -> void:
@@ -143,6 +144,7 @@ func show_callout(
 	_visible_state = true
 	_bubble.visible = true
 	_pending_dismiss = dismiss_duration if dismiss < 0.0 else maxf(dismiss, 0.0)
+	_pending_trans = trans
 	set_process(not Engine.is_editor_hint())
 	if was_visible:
 		_layout_bubble()
@@ -189,7 +191,7 @@ func hide_callout(
 
 
 ## Cue receiver entry point. Supported `data` keys: `text`, `anchor` (NodePath or
-## Node), `hold`, `reveal`, `hide`.
+## Node), `hold`, `reveal`, `dismiss`, `duration` (hide duration), `hide`.
 func on_cue(event: CueEvent) -> void:
 	if event == null or event.cue == null:
 		return
@@ -202,18 +204,21 @@ func on_cue(event: CueEvent) -> void:
 	var anchor := _resolve_anchor(event.get_data("anchor", null))
 	# The whole cue lifetime — reveal, hold and fade-out — has to fit the shot's
 	# remaining time so the bubble is gone when the camera settles.
-	var budget := maxf(event.remaining, 0.0)
-	var reveal := clampf(float(event.get_data("reveal", reveal_duration)), 0.0, budget)
-	var dismiss := minf(dismiss_duration, maxf(budget - reveal, 0.0))
-	var hold := clampf(
-		float(event.get_data("hold", budget)), reveal, maxf(budget - dismiss, reveal)
-	)
+	var lifetime := event.get_lifetime(reveal_duration, dismiss_duration)
 	var shot_trans := Tween.TRANS_CUBIC
 	var shot_ease := Tween.EASE_OUT
 	if event.shot != null:
 		shot_trans = event.shot.trans
 		shot_ease = event.shot.ease
-	show_callout(text, anchor, hold, reveal, shot_trans, shot_ease, dismiss)
+	show_callout(
+		text,
+		anchor,
+		float(lifetime["hold"]),
+		float(lifetime["reveal"]),
+		shot_trans,
+		shot_ease,
+		float(lifetime["dismiss"])
+	)
 
 
 ## Anchor point in screen pixels, after clamping and smoothing.
@@ -385,17 +390,22 @@ func _resolve_anchor(value: Variant) -> Node:
 
 
 func _on_hold_finished() -> void:
+	_tween = null
 	if _visible_state:
-		hide_callout(_pending_dismiss)
+		# Match the shot's transition curve on the auto-dismiss; the fade-out ease
+		# stays EASE_IN so the bubble leaves instead of settling.
+		hide_callout(_pending_dismiss, _pending_trans)
 
 
 func _on_show_tween_finished() -> void:
+	_tween = null
 	if _bubble != null:
 		_bubble.modulate.a = 1.0
 		_bubble.scale = Vector2.ONE
 
 
 func _on_hide_tween_finished() -> void:
+	_tween = null
 	_visible_state = false
 	if _bubble != null:
 		_bubble.visible = false

@@ -5,7 +5,8 @@ extends Control
 ##
 ## Cues arrive through [method on_cue] with a [CueEvent]. The event carries the
 ## shot's remaining time budget, so a lower third scheduled mid-shot reveals,
-## holds and fades out on the same clock as the camera move (M2 sequencing rule).
+## holds and fades out on the same clock as the camera move (M2–M3 sequencing
+## rule).
 ##
 ## Re-cueing while visible retargets the copy without popping: alpha and slide
 ## position continue from their current values instead of restarting at zero.
@@ -73,6 +74,7 @@ var _rest_position: Vector2 = Vector2.ZERO
 var _visible_state: bool = false
 var _tween: Tween = null
 var _pending_dismiss: float = -1.0
+var _pending_trans: Tween.TransitionType = Tween.TRANS_CUBIC
 var _current_title: String = ""
 var _current_subtitle: String = ""
 var _current_kicker: String = ""
@@ -91,12 +93,13 @@ func _notification(what: int) -> void:
 	if what != NOTIFICATION_RESIZED or _panel == null:
 		return
 	_layout_panel()
-	if _visible_state and (_tween == null or not _tween.is_valid()):
+	if _visible_state and (_tween == null or not _tween.is_running()):
 		_panel.position = _rest_position
 
 
 ## Shows a lower third and returns the reveal/animation [Tween]. When already
 ## visible, copy and layout are retargeted without resetting alpha or position.
+## Returns `null` only when the card UI could not be built.
 ##
 ## [param hold] is the total time the card stays up before it starts fading out,
 ## in seconds; `0` keeps it up until [method hide_lower_third] or the next cue.
@@ -130,6 +133,7 @@ func show_lower_third(
 	_panel.visible = true
 	_visible_state = true
 	_pending_dismiss = dismiss_duration if dismiss < 0.0 else maxf(dismiss, 0.0)
+	_pending_trans = trans
 	_layout_panel()
 	if not was_visible:
 		_panel.modulate.a = 0.0
@@ -188,7 +192,7 @@ func hide_lower_third(
 
 
 ## Cue receiver entry point. Supported `data` keys: `title`, `subtitle`,
-## `kicker`, `hold`, `reveal`, `duration` (hide duration), `hide`.
+## `kicker`, `hold`, `reveal`, `dismiss`, `duration` (hide duration), `hide`.
 func on_cue(event: CueEvent) -> void:
 	if event == null or event.cue == null:
 		return
@@ -204,19 +208,21 @@ func on_cue(event: CueEvent) -> void:
 	var kicker := String(event.get_data("kicker", ""))
 	# The whole cue lifetime — reveal, hold and fade-out — has to fit the shot's
 	# remaining time so the card is gone when the camera settles.
-	var budget := maxf(event.remaining, 0.0)
-	var reveal := clampf(float(event.get_data("reveal", reveal_duration)), 0.0, budget)
-	var dismiss := minf(dismiss_duration, maxf(budget - reveal, 0.0))
-	var hold := clampf(
-		float(event.get_data("hold", budget)), reveal, maxf(budget - dismiss, reveal)
-	)
+	var lifetime := event.get_lifetime(reveal_duration, dismiss_duration)
 	var shot_trans := Tween.TRANS_CUBIC
 	var shot_ease := Tween.EASE_OUT
 	if event.shot != null:
 		shot_trans = event.shot.trans
 		shot_ease = event.shot.ease
 	show_lower_third(
-		title, subtitle, hold, reveal, shot_trans, shot_ease, dismiss, kicker
+		title,
+		subtitle,
+		float(lifetime["hold"]),
+		float(lifetime["reveal"]),
+		shot_trans,
+		shot_ease,
+		float(lifetime["dismiss"]),
+		kicker
 	)
 
 
@@ -369,17 +375,22 @@ func _layout_panel() -> void:
 
 
 func _on_hold_finished() -> void:
+	_tween = null
 	if _visible_state:
-		hide_lower_third(_pending_dismiss)
+		# Match the shot's transition curve on the auto-dismiss; the fade-out ease
+		# stays EASE_IN so the card leaves instead of settling.
+		hide_lower_third(_pending_dismiss, _pending_trans)
 
 
 func _on_show_tween_finished() -> void:
+	_tween = null
 	if _panel != null:
 		_panel.modulate.a = 1.0
 		_panel.position = _rest_position
 
 
 func _on_hide_tween_finished() -> void:
+	_tween = null
 	_visible_state = false
 	if _panel != null:
 		_panel.visible = false

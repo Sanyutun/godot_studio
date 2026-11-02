@@ -1,5 +1,5 @@
 extends "res://tests/support/test_case.gd"
-## M2 test — lower thirds reveal, hold and dismiss inside the shot budget.
+## M3 test — lower thirds reveal, hold and dismiss inside the shot budget.
 ##
 ## The cue path is exercised through a real [Director], so the assertion covers
 ## cue clamping → [CueEvent.remaining] budget → slide/fade tween.
@@ -13,6 +13,7 @@ func _run_tests() -> void:
 	await _check_retarget_without_pop()
 	await _check_direct_hide()
 	await _check_cue_hide()
+	await _check_resize_keeps_rest_position()
 	finish()
 
 
@@ -52,7 +53,7 @@ func _check_cue_budget_timing() -> void:
 	cue.data = {
 		"title": "Deterministic",
 		"subtitle": "UI on the camera clock",
-		"kicker": "M2",
+		"kicker": "M3",
 		"reveal": 0.2,
 	}
 	shot.cues = [cue]
@@ -82,7 +83,7 @@ func _check_cue_budget_timing() -> void:
 	check(shown[0], "cue showed the lower third")
 	check(lower.get_title() == "Deterministic", "cue title reached the card")
 	check(lower.get_subtitle() == "UI on the camera clock", "cue subtitle reached the card")
-	check(lower.get_kicker() == "M2", "cue kicker reached the card")
+	check(lower.get_kicker() == "M3", "cue kicker reached the card")
 	check(hidden_usec[0] > 0, "lower third auto-hid")
 	check(not lower.is_lower_third_visible(), "lower third is hidden after the shot")
 
@@ -164,4 +165,45 @@ func _check_cue_hide() -> void:
 	await wait(0.12)
 
 	check(not lower.is_lower_third_visible(), "hide cue dismisses the card")
+	await dispose(scratch)
+
+
+func _check_resize_keeps_rest_position() -> void:
+	var scratch := make_root("LowerThirdResize")
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(640, 360)
+	scratch.add_child(viewport)
+	var lower := LowerThird.new()
+	viewport.add_child(lower)
+	lower.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	await process_frame
+	await process_frame
+
+	# No reveal tween is running, so a resize must snap the visible card to its
+	# recomputed rest position instead of leaving it at the old viewport height.
+	lower.show_lower_third("Resizable", "stays pinned", 0.0, 0.0)
+	await process_frame
+	var panel := lower.get_panel()
+	check(panel != null, "resize: card builds its panel")
+	if panel == null:
+		await dispose(scratch)
+		return
+	var first_rest := lower.get_rest_position()
+	check(first_rest.y > 200.0, "resize: card starts near the bottom")
+	check_approx(panel.position.y, first_rest.y, 0.5, "resize: card sits at its rest position")
+
+	viewport.size = Vector2i(800, 600)
+	await process_frame
+	await process_frame
+	var second_rest := lower.get_rest_position()
+	check(
+		second_rest.y > first_rest.y + 100.0,
+		"resize: rest position follows the taller viewport"
+	)
+	check_approx(
+		panel.position.y,
+		second_rest.y,
+		0.5,
+		"resize: visible card follows the new rest position"
+	)
 	await dispose(scratch)
