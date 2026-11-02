@@ -286,7 +286,6 @@ func _build_scroll_body() -> void:
 	marker_row.add_child(_marker_name)
 	_marker_time = _compact_spin(marker_row, 0.0, 600.0, 0.01)
 	_marker_time.tooltip_text = "Marker time in seconds."
-	marker_row.add_child(_marker_time)
 	body.add_child(marker_row)
 	var marker_buttons := HBoxContainer.new()
 	marker_buttons.add_child(_button("Set", "Add or retime the named marker.", _on_set_marker))
