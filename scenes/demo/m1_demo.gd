@@ -66,7 +66,14 @@ func _render_take(user_args: PackedStringArray) -> void:
 	if not size_text.is_empty():
 		var parts := size_text.split("x")
 		if parts.size() == 2:
-			render_settings.resolution = Vector2i(int(parts[0]), int(parts[1]))
+			var width := int(parts[0])
+			var height := int(parts[1])
+			if width > 0 and height > 0:
+				render_settings.resolution = Vector2i(width, height)
+			else:
+				push_warning(
+					"[M4] --size expects positive WIDTHxHEIGHT; using the viewport size."
+				)
 		else:
 			push_warning("[M4] --size expects WIDTHxHEIGHT; using the viewport size.")
 

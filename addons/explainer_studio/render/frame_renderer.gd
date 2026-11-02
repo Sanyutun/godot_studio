@@ -8,6 +8,10 @@ extends Node
 ## `--fixed-fps <settings.fps>` so Tweens advance by exactly one frame per
 ## capture; that fixed step is what makes repeated renders match.
 ##
+## Frame 0 is captured before playback starts, so it shows the sequence's
+## initial state. The remaining frames land at `1/fps` through `(N-1)/fps`;
+## `N/fps` is the take's duration and is not duplicated as a sample.
+##
 ## The node lives beside the Director in the demo scene, but it can also be
 ## created at runtime from a tool script:
 ##
@@ -40,9 +44,15 @@ signal render_failed(message: String)
 ## Encoder instance. Leave empty to create one from [member RenderSettings.ffmpeg_path].
 var encoder: FfmpegEncoder
 
-## Test seam: when valid, called with the frame index and must return an [Image].
-## Real renders leave it invalid and read the viewport texture after a draw.
+## Test seam: when valid, called after [member await_frame] with the frame index
+## and must return an [Image]. Real renders leave it invalid and read the
+## viewport texture after a draw. The callable is synchronous.
 var capture_frame: Callable
+
+## Test seam: awaited once before each capture. Defaults to
+## [signal RenderingServer.frame_post_draw]. Headless tests inject a process
+## frame await because the dummy renderer never emits the draw signal.
+var await_frame: Callable
 
 var _rendering: bool = false
 var _cancelled: bool = false
@@ -50,7 +60,9 @@ var _last_error: String = ""
 var _last_result: Dictionary = {}
 var _saved_window_size: Vector2i = Vector2i.ZERO
 var _saved_subviewport_size: Vector2i = Vector2i.ZERO
+var _saved_subviewport_update_mode: int = SubViewport.UPDATE_WHEN_VISIBLE
 var _viewport_resized: bool = false
+var _update_mode_overridden: bool = false
 
 
 ## Renders [param sequence_override] (or [member sequence]) using
@@ -94,38 +106,51 @@ func render(
 	_cancelled = false
 	_rendering = true
 
+	if encoder == null:
+		encoder = FfmpegEncoder.new(active_settings.ffmpeg_path)
+	if not encoder.is_available(active_settings):
+		return _fail("ffmpeg is not available: %s" % active_settings.ffmpeg_path)
+
 	if not _ensure_directory(active_settings.get_resolved_frames_dir()):
 		return _fail("Cannot create frames directory: %s" % active_settings.get_frames_dir())
 	if not _ensure_directory(_parent_dir(active_settings.get_output_path())):
 		return _fail("Cannot create output directory for %s" % active_settings.get_output_path())
 	_clear_old_frames(active_settings)
 
-	if encoder == null:
-		encoder = FfmpegEncoder.new(active_settings.ffmpeg_path)
-
 	await _apply_resolution(active_settings)
 	if _cancelled:
 		return _fail("Render cancelled.")
 
 	render_started.emit(frame_count, active_settings.get_output_path())
+	if _cancelled:
+		return _fail("Render cancelled.")
+
+	# Capture frame 0 before playback starts. Waiting for the first draw after
+	# play() would already be one fixed step into the tween, shifting every
+	# captured frame by one tick.
+	var first_image := await _capture_frame_image(0)
+	if first_image == null:
+		return _fail("Frame 0 could not be captured. Is a renderer available?")
+	var first_issue := _store_frame(0, first_image, active_settings, frame_count)
+	if not first_issue.is_empty():
+		return _fail(first_issue)
+	if _cancelled:
+		return _fail("Render cancelled.")
+
 	if director != null:
 		director.play(active_sequence)
 
-	for index in frame_count:
+	for index in range(1, frame_count):
 		if _cancelled:
 			return _fail("Render cancelled.")
-		var image: Image = await _grab_frame(index)
+		var image := await _capture_frame_image(index)
 		if image == null:
 			return _fail(
 				"Frame %d could not be captured. Is a renderer available?" % index
 			)
-		var frame_path := active_settings.get_resolved_frames_dir().path_join(
-			active_settings.get_frame_filename(index)
-		)
-		var save_error := image.save_png(frame_path)
-		if save_error != OK:
-			return _fail("Could not save frame %d (error %d)." % [index, save_error])
-		frame_rendered.emit(index, frame_count, frame_path)
+		var issue := _store_frame(index, image, active_settings, frame_count)
+		if not issue.is_empty():
+			return _fail(issue)
 
 	_stop_playback()
 	_restore_resolution()
@@ -188,52 +213,124 @@ func get_last_result() -> Dictionary:
 	return _last_result
 
 
-func _grab_frame(index: int) -> Image:
+func _capture_frame_image(index: int) -> Image:
+	if not capture_frame.is_valid() and _get_capture_viewport() == null:
+		return null
+	await _await_frame()
+	return _read_frame(index)
+
+
+func _await_frame() -> void:
+	if await_frame.is_valid():
+		await await_frame.call()
+		return
+	await RenderingServer.frame_post_draw
+
+
+func _read_frame(index: int) -> Image:
 	if capture_frame.is_valid():
 		return capture_frame.call(index) as Image
-	var viewport := capture_viewport
-	if viewport == null and is_inside_tree():
-		viewport = get_viewport()
+	var viewport := _get_capture_viewport()
 	if viewport == null:
 		return null
-	await RenderingServer.frame_post_draw
 	var texture := viewport.get_texture()
 	if texture == null:
 		return null
 	return texture.get_image()
 
 
-func _apply_resolution(active_settings: RenderSettings) -> void:
+func _store_frame(
+	index: int, image: Image, active_settings: RenderSettings, frame_count: int
+) -> String:
+	var size_issue := _frame_size_issue(image, active_settings)
+	if not size_issue.is_empty():
+		return size_issue
+	var frame_path := active_settings.get_resolved_frames_dir().path_join(
+		active_settings.get_frame_filename(index)
+	)
+	var save_error := image.save_png(frame_path)
+	if save_error != OK:
+		return "Could not save frame %d (error %d)." % [index, save_error]
+	frame_rendered.emit(index, frame_count, frame_path)
+	return ""
+
+
+func _frame_size_issue(image: Image, active_settings: RenderSettings) -> String:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return "Captured frame has no pixels."
 	var target := active_settings.resolution
-	if target.x <= 0 or target.y <= 0 or not is_inside_tree():
+	if target.x > 0 and target.y > 0 and (width != target.x or height != target.y):
+		return (
+			"Captured frame is %dx%d but the render resolution is %dx%d. "
+			+ "Check viewport/window scaling."
+		) % [width, height, target.x, target.y]
+	if active_settings.requires_even_dimensions() and (width % 2 != 0 or height % 2 != 0):
+		return (
+			"Captured frame %dx%d needs even width and height for %s."
+			% [width, height, active_settings.pixel_format]
+		)
+	return ""
+
+
+func _get_capture_viewport() -> Viewport:
+	if capture_viewport != null and is_instance_valid(capture_viewport):
+		return capture_viewport
+	if is_inside_tree():
+		return get_viewport()
+	return null
+
+
+func _apply_resolution(active_settings: RenderSettings) -> void:
+	if not is_inside_tree():
 		return
-	var viewport := capture_viewport if capture_viewport != null else get_viewport()
+	var viewport := _get_capture_viewport()
+	if viewport == null:
+		return
+	var target := active_settings.resolution
+	var has_target := target.x > 0 and target.y > 0
 	if viewport is SubViewport:
 		var subviewport := viewport as SubViewport
-		_saved_subviewport_size = subviewport.size
-		subviewport.size = target
-		_viewport_resized = true
-	else:
-		var window := get_window()
-		if window != null:
-			_saved_window_size = window.size
-			window.size = target
+		_saved_subviewport_update_mode = subviewport.render_target_update_mode
+		subviewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		_update_mode_overridden = true
+		if has_target:
+			_saved_subviewport_size = subviewport.size
+			subviewport.size = target
 			_viewport_resized = true
-	if _viewport_resized:
+		await get_tree().process_frame
+		return
+	if not has_target:
+		return
+	var window := viewport as Window
+	if window == null:
+		window = get_window()
+	if window != null:
+		_saved_window_size = window.size
+		window.size = target
+		_viewport_resized = true
 		await get_tree().process_frame
 
 
 func _restore_resolution() -> void:
-	if not _viewport_resized:
+	if not _viewport_resized and not _update_mode_overridden:
 		return
-	var viewport := capture_viewport if capture_viewport != null else get_viewport()
+	var viewport := _get_capture_viewport()
 	if viewport is SubViewport:
-		(viewport as SubViewport).size = _saved_subviewport_size
-	else:
-		var window := get_window()
+		var subviewport := viewport as SubViewport
+		if _viewport_resized:
+			subviewport.size = _saved_subviewport_size
+		if _update_mode_overridden:
+			subviewport.render_target_update_mode = _saved_subviewport_update_mode
+	elif _viewport_resized:
+		var window := viewport as Window
+		if window == null:
+			window = get_window()
 		if window != null:
 			window.size = _saved_window_size
 	_viewport_resized = false
+	_update_mode_overridden = false
 
 
 func _stop_playback() -> void:

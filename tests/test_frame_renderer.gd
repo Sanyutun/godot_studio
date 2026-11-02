@@ -1,7 +1,8 @@
 extends "res://tests/support/test_case.gd"
 ## M4 test 3 — frame loop, PNG writing, cleanup, cancellation and failure paths.
 ## Capture is injected so the test runs headlessly; ffmpeg is faked the same way
-## as in test_ffmpeg_encoder.gd.
+## as in test_ffmpeg_encoder.gd. The injected await_frame seam advances one
+## SceneTree frame per capture, matching the real draw-per-frame loop.
 
 const OUTPUT := "user://m4_frame_renderer/take.mp4"
 const FRAMES := "user://m4_frame_renderer/frames"
@@ -13,6 +14,7 @@ func _run_tests() -> void:
 	var renderer := FrameRenderer.new()
 	renderer.name = "FrameRenderer"
 	scratch.add_child(renderer)
+	renderer.await_frame = _await_process_frame
 	var settings := _settings()
 	var sequence := _hold_sequence(0.1)
 
@@ -35,11 +37,10 @@ func _run_tests() -> void:
 	encoder.process_runner = func(
 		_executable: String, args: PackedStringArray, output: Array
 	) -> int:
+		if args.has("-version"):
+			return 0
 		encoded[0] = true
-		var output_file := FileAccess.open(String(args[args.size() - 1]), FileAccess.WRITE)
-		if output_file != null:
-			output_file.store_string("fake mp4")
-			output_file.close()
+		_write_output(args)
 		output.append("encoded 3 frames")
 		return 0
 	renderer.encoder = encoder
@@ -87,8 +88,10 @@ func _run_tests() -> void:
 		func(message: String) -> void: failures.append(message)
 	)
 	encoder.process_runner = func(
-		_executable: String, _args: PackedStringArray, output: Array
+		_executable: String, args: PackedStringArray, output: Array
 	) -> int:
+		if args.has("-version"):
+			return 0
 		output.append("Unknown encoder 'libx264'")
 		return 1
 	var failed := await renderer.render(sequence, settings)
@@ -109,8 +112,11 @@ func _run_tests() -> void:
 	check(not bool(renderer.get_last_result().get("ok", true)), "failure result reports not ok")
 
 	encoder.process_runner = func(
-		_executable: String, _args: PackedStringArray, output: Array
+		_executable: String, args: PackedStringArray, output: Array
 	) -> int:
+		if args.has("-version"):
+			return 0
+		_write_output(args)
 		output.append("ok")
 		return 0
 	renderer.capture_frame = func(index: int) -> Image:
@@ -169,9 +175,130 @@ func _run_tests() -> void:
 	check(directed_ok, "directed render succeeds: %s" % renderer.get_last_error())
 	check(not director.is_playing(), "renderer stops the director after capture")
 
+	await _check_capture_order(scratch)
+	await _check_frame_size_checks(scratch)
+	await _check_subviewport_capture(scratch)
+	await _check_encoder_preflight(scratch)
+
 	await dispose(scratch)
 	_clean()
 	finish()
+
+
+func _check_capture_order(scratch: Node) -> void:
+	var director := _OrderDirector.new()
+	director.name = "OrderDirector"
+	scratch.add_child(director)
+	var renderer := FrameRenderer.new()
+	renderer.name = "OrderRenderer"
+	scratch.add_child(renderer)
+	renderer.await_frame = _await_process_frame
+	renderer.director = director
+	renderer.encoder = _fake_encoder()
+
+	var starts: Array[bool] = []
+	renderer.capture_frame = func(_index: int) -> Image:
+		starts.append(director.played)
+		return Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	var ok := await renderer.render(_hold_sequence(0.1), _settings())
+	check(ok, "ordered render succeeds: %s" % renderer.get_last_error())
+	check(starts.size() == 3, "ordered render captures every frame")
+	check(not starts[0], "frame 0 is captured before playback starts")
+	check(starts[1], "playback starts after frame 0")
+
+
+func _check_frame_size_checks(scratch: Node) -> void:
+	var capture_viewport := SubViewport.new()
+	capture_viewport.name = "SizeViewport"
+	capture_viewport.size = Vector2i(16, 16)
+	scratch.add_child(capture_viewport)
+	var renderer := FrameRenderer.new()
+	renderer.name = "SizeRenderer"
+	scratch.add_child(renderer)
+	renderer.await_frame = _await_process_frame
+	renderer.capture_viewport = capture_viewport
+	renderer.encoder = _fake_encoder()
+	var settings := _settings()
+	settings.resolution = Vector2i(4, 4)
+
+	renderer.capture_frame = func(_index: int) -> Image:
+		return Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	var mismatch := await renderer.render(_hold_sequence(0.1), settings)
+	check(not mismatch, "captured size mismatch fails the render")
+	check(
+		renderer.get_last_error().contains("Captured frame"),
+		"size mismatch names the captured frame"
+	)
+	check(capture_viewport.size == Vector2i(16, 16), "size mismatch restores the viewport")
+
+	settings.resolution = Vector2i.ZERO
+	renderer.capture_frame = func(_index: int) -> Image:
+		return Image.create(3, 3, false, Image.FORMAT_RGBA8)
+	var odd := await renderer.render(_hold_sequence(0.1), settings)
+	check(not odd, "odd captured frame fails for yuv420p")
+	check(renderer.get_last_error().contains("even"), "odd frame failure explains the rule")
+
+
+func _check_subviewport_capture(scratch: Node) -> void:
+	var subviewport := SubViewport.new()
+	subviewport.name = "CaptureViewport"
+	subviewport.size = Vector2i(16, 16)
+	subviewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
+	scratch.add_child(subviewport)
+	var renderer := FrameRenderer.new()
+	renderer.name = "SubviewportRenderer"
+	scratch.add_child(renderer)
+	renderer.await_frame = _await_process_frame
+	renderer.capture_viewport = subviewport
+	renderer.encoder = _fake_encoder()
+	var settings := _settings()
+	settings.resolution = Vector2i(8, 8)
+
+	var observed_modes: Array[int] = []
+	var observed_sizes: Array[Vector2i] = []
+	renderer.capture_frame = func(_index: int) -> Image:
+		observed_modes.append(subviewport.render_target_update_mode)
+		observed_sizes.append(subviewport.size)
+		return Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	var ok := await renderer.render(_hold_sequence(0.1), settings)
+	check(ok, "subviewport render succeeds: %s" % renderer.get_last_error())
+	check(not observed_modes.is_empty(), "subviewport render captured frames")
+	check(
+		observed_modes[0] == SubViewport.UPDATE_ALWAYS,
+		"subviewport updates every frame while rendering"
+	)
+	check(observed_sizes[0] == Vector2i(8, 8), "subviewport is resized for the render")
+	check(
+		subviewport.render_target_update_mode == SubViewport.UPDATE_WHEN_VISIBLE,
+		"subviewport update mode is restored"
+	)
+	check(subviewport.size == Vector2i(16, 16), "subviewport size is restored")
+
+
+func _check_encoder_preflight(scratch: Node) -> void:
+	var renderer := FrameRenderer.new()
+	renderer.name = "PreflightRenderer"
+	scratch.add_child(renderer)
+	renderer.await_frame = _await_process_frame
+	var encoder := FfmpegEncoder.new("missing-ffmpeg")
+	encoder.process_runner = func(
+		_executable: String, args: PackedStringArray, _output: Array
+	) -> int:
+		return 127 if args.has("-version") else 0
+	renderer.encoder = encoder
+	var captures: Array[int] = []
+	renderer.capture_frame = func(index: int) -> Image:
+		captures.append(index)
+		return Image.create(2, 2, false, Image.FORMAT_RGBA8)
+	var settings := _settings()
+	settings.ffmpeg_path = "missing-ffmpeg"
+	var ok := await renderer.render(_hold_sequence(0.1), settings)
+	check(not ok, "missing ffmpeg fails the render")
+	check(
+		renderer.get_last_error().contains("not available"),
+		"missing ffmpeg failure names availability"
+	)
+	check(captures.is_empty(), "missing ffmpeg fails before capture")
 
 
 func _settings() -> RenderSettings:
@@ -190,6 +317,35 @@ func _hold_sequence(duration: float) -> Sequence:
 	shot.duration = duration
 	sequence.add_shot(shot)
 	return sequence
+
+
+func _await_process_frame() -> void:
+	await process_frame
+
+
+func _fake_encoder() -> FfmpegEncoder:
+	var encoder := FfmpegEncoder.new("fake-ffmpeg")
+	encoder.process_runner = _fake_runner
+	return encoder
+
+
+func _fake_runner(
+	_executable: String, args: PackedStringArray, output: Array
+) -> int:
+	if args.has("-version"):
+		return 0
+	_write_output(args)
+	output.append("encoded")
+	return 0
+
+
+func _write_output(args: PackedStringArray) -> void:
+	if args.is_empty():
+		return
+	var file := FileAccess.open(String(args[args.size() - 1]), FileAccess.WRITE)
+	if file != null:
+		file.store_string("fake mp4")
+		file.close()
 
 
 func _count_frames(directory: String) -> int:
@@ -229,3 +385,12 @@ func _remove_dir(path: String) -> void:
 		entry = dir.get_next()
 	dir.list_dir_end()
 	DirAccess.remove_absolute(absolute)
+
+
+class _OrderDirector:
+	extends Director
+
+	var played: bool = false
+
+	func play(_sequence: Sequence) -> void:
+		played = true

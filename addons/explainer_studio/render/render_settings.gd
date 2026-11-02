@@ -9,13 +9,30 @@ extends Resource
 ## `1.0 / fps` per processed frame; that is what makes the result repeatable.
 ##
 ## Everything serializes to `.tres`, so a render profile can be checked in next
-## to a sequence and reused by the dock (M5) or CI.
+## to a sequence and reused by tooling or CI.
 
 ## Prefix and extension used for captured frames. The encoder and cleanup code
 ## both derive the ffmpeg pattern from these.
 const FRAME_PREFIX := "frame_"
 const FRAME_DIGITS := 6
 const FRAME_EXTENSION := ".png"
+
+## Pixel formats with 2×2 chroma subsampling. ffmpeg's swscale and the x264/x265
+## encoders reject odd width or height for these formats.
+const EVEN_PIXEL_FORMATS := [
+	"yuv420p",
+	"yuvj420p",
+	"yuv420p10le",
+	"yuv420p10be",
+	"yuv420p12le",
+	"yuv420p12be",
+	"nv12",
+	"nv21",
+	"p010le",
+	"p010be",
+	"p016le",
+	"p016be",
+]
 
 ## Output movie. `user://` and `res://` paths are globalized before ffmpeg runs.
 @export var output_path: String = "user://explainer_render/take.mp4"
@@ -29,6 +46,7 @@ const FRAME_EXTENSION := ".png"
 var fps: int = 60
 
 ## Optional output size in pixels. `(0, 0)` keeps the project viewport size.
+## Formats such as [member pixel_format] `yuv420p` require even width and height.
 @export var resolution: Vector2i = Vector2i.ZERO
 
 ## ffmpeg executable. Resolved through `PATH` when not absolute.
@@ -45,7 +63,8 @@ var preset: String = "medium"
 ## Video codec passed to ffmpeg.
 @export var video_codec: String = "libx264"
 
-## Pixel format passed to ffmpeg. `yuv420p` is the compatible default.
+## Pixel format passed to ffmpeg. `yuv420p` is the compatible default and needs
+## even output dimensions.
 @export var pixel_format: String = "yuv420p"
 
 ## Optional audio file to mux into the movie. Leave empty for a silent render.
@@ -147,6 +166,12 @@ func has_audio() -> bool:
 	return not audio_path.is_empty()
 
 
+## Whether [member pixel_format] uses 4:2:0 chroma subsampling, which makes odd
+## frame dimensions invalid for ffmpeg.
+func requires_even_dimensions() -> bool:
+	return pixel_format.to_lower() in EVEN_PIXEL_FORMATS
+
+
 ## Builds the complete ffmpeg argument list for this profile.
 func build_ffmpeg_args() -> PackedStringArray:
 	var args := PackedStringArray()
@@ -218,6 +243,17 @@ func validate(duration: float = -1.0) -> PackedStringArray:
 		issues.append("CRF must be in [0, 51].")
 	if resolution.x < 0 or resolution.y < 0:
 		issues.append("Resolution cannot be negative.")
+	elif (resolution.x == 0) != (resolution.y == 0):
+		issues.append("Resolution must be (0, 0) or positive on both axes.")
+	elif resolution != Vector2i.ZERO:
+		if (
+			requires_even_dimensions()
+			and (resolution.x % 2 != 0 or resolution.y % 2 != 0)
+		):
+			issues.append(
+				"Resolution %dx%d needs even width and height for %s."
+				% [resolution.x, resolution.y, pixel_format]
+			)
 	if has_audio() and not FileAccess.file_exists(audio_path):
 		issues.append("Audio file '%s' does not exist." % audio_path)
 	if duration > 0.0 and get_frame_count(duration) <= 0:

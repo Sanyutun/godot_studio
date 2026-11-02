@@ -10,6 +10,7 @@ func _run_tests() -> void:
 	_frame_paths_and_patterns()
 	_ffmpeg_arguments()
 	_validation()
+	_even_dimensions()
 
 	if FileAccess.file_exists(AUDIO_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(AUDIO_PATH))
@@ -159,6 +160,40 @@ func _validation() -> void:
 	check(_has_issue(issues, "CRF"), "out-of-range crf is reported")
 	check(_has_issue(issues, "Resolution"), "negative resolution is reported")
 	check(_has_issue(issues, "Audio file"), "missing audio file is reported")
+
+
+func _even_dimensions() -> void:
+	var settings := RenderSettings.new()
+	settings.output_path = "user://renders/take.mp4"
+	settings.frames_dir = "user://renders/take_frames"
+	check(settings.requires_even_dimensions(), "yuv420p requires even dimensions")
+
+	settings.resolution = Vector2i(641, 360)
+	check(
+		_has_issue(settings.validate(1.0), "even"),
+		"odd width is reported for yuv420p"
+	)
+	settings.resolution = Vector2i(640, 361)
+	check(
+		_has_issue(settings.validate(1.0), "even"),
+		"odd height is reported for yuv420p"
+	)
+	settings.resolution = Vector2i(640, 360)
+	check(settings.validate(1.0).is_empty(), "even resolution validates cleanly")
+
+	settings.resolution = Vector2i(0, 360)
+	check(
+		_has_issue(settings.validate(1.0), "both axes"),
+		"mixed zero resolution is reported"
+	)
+
+	settings.pixel_format = "yuv444p"
+	settings.resolution = Vector2i(641, 361)
+	check(
+		not settings.requires_even_dimensions(),
+		"4:4:4 does not require even dimensions"
+	)
+	check(settings.validate(1.0).is_empty(), "odd resolution is allowed for 4:4:4")
 
 
 func _has_issue(issues: PackedStringArray, needle: String) -> bool:
