@@ -161,6 +161,25 @@ func mark_changed() -> void:
 ## Authoring sanity checks. Returns human readable issues; empty means clean.
 func validate() -> PackedStringArray:
 	var issues := PackedStringArray()
+	var total := get_total_duration()
+	var seen: Dictionary = {}
+	var marker_index := 0
+	for marker: Dictionary in markers:
+		var marker_name := String(marker.get("name", ""))
+		var marker_time := float(marker.get("time", 0.0))
+		if marker_name.is_empty():
+			issues.append("Marker %d has an empty name." % marker_index)
+		elif seen.has(marker_name):
+			issues.append("Marker %d duplicates name '%s'." % [marker_index, marker_name])
+		else:
+			seen[marker_name] = true
+		if not is_finite(marker_time) or marker_time < 0.0 or marker_time > total:
+			issues.append(
+				"Marker '%s' at %.2fs is outside [0, %.2fs]."
+				% [marker_name, marker_time, total]
+			)
+		marker_index += 1
+
 	var index := 0
 	for shot in shots:
 		if shot == null:
@@ -178,6 +197,17 @@ func validate() -> PackedStringArray:
 						issues.append(
 							"Shot %d cue marker '%s' is not defined." % [index, cue.marker]
 						)
+					else:
+						var resolved := get_marker_time(cue.marker) - get_shot_start_time(index)
+						var duration := shot.get_safe_duration()
+						if resolved < 0.0 or resolved > duration:
+							issues.append(
+								(
+									"Shot %d cue marker '%s' resolves to %.2fs, outside "
+									+ "[0, %.2fs]; it will be clamped."
+								)
+								% [index, cue.marker, resolved, duration]
+							)
 				elif cue.time < 0.0 or cue.time > shot.duration:
 					issues.append(
 						"Shot %d cue at %.2fs is outside [0, %.2fs]; it will be clamped."

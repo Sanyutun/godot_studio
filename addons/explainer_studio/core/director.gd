@@ -92,7 +92,8 @@ func stop() -> void:
 	var stopped_sequence := _sequence
 	_playing = false
 	_shot_index = -1
-	_sequence = null
+	# Keep `_sequence` so preview scrubbers and renderers can still query the take
+	# after it is stopped; `is_playing()` is the authoritative playback state.
 	if was_playing:
 		playback_changed.emit(false)
 		if stopped_sequence != null:
@@ -109,19 +110,22 @@ func get_shot_index() -> int:
 	return _shot_index
 
 
-## Sequence currently playing (or most recently played), or `null`.
+## Sequence currently playing, or the most recent take after it finished or was
+## stopped. `null` before the first [method play].
 func get_sequence() -> Sequence:
 	return _sequence
 
 
-## Total duration of the active sequence in seconds.
+## Total duration of the current sequence (playing or most recently played) in
+## seconds.
 func get_total_duration() -> float:
 	if _sequence == null:
 		return 0.0
 	return _sequence.get_total_duration()
 
 
-## Start time of the shot at [param index] in the active sequence, in seconds.
+## Start time of the shot at [param index] in the current sequence (playing or
+## most recently played), in seconds.
 func get_shot_start_time(index: int) -> float:
 	if _sequence == null:
 		return 0.0
@@ -129,7 +133,9 @@ func get_shot_start_time(index: int) -> float:
 
 
 ## Resolves [param cue] to shot-relative seconds using the active sequence's
-## markers. Useful for preview scrubbers and the editor dock.
+## markers. Useful for preview scrubbers and the editor dock. Falls back to the
+## non-negative [member Cue.time] when there is no sequence or shot to clamp
+## against.
 func resolve_cue_time(cue: Cue, shot_index: int) -> float:
 	if cue == null:
 		return 0.0
@@ -172,45 +178,59 @@ func _schedule_cues(shot: Shot, index: int) -> void:
 	if shot.cues.is_empty():
 		return
 
-	var duration := shot.get_safe_duration()
-	var ordered := _ordered_cues(shot, index, duration)
-	if ordered.is_empty():
+	var slots := _ordered_cues(shot, index, shot.get_safe_duration())
+	if slots.is_empty():
 		return
 
 	var cue_tween := create_tween()
 	cue_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	_cue_tween = cue_tween
 	var cursor := 0.0
-	for cue in ordered:
-		var cue_time := _resolve_cue_time(cue, index, duration)
-		if cue_time > cursor:
-			cue_tween.tween_interval(cue_time - cursor)
-			cursor = cue_time
-		cue_tween.tween_callback(_fire_cue.bind(cue, index, shot, cue_time))
+	for slot in slots:
+		if slot.time > cursor:
+			cue_tween.tween_interval(slot.time - cursor)
+			cursor = slot.time
+		cue_tween.tween_callback(_fire_cue.bind(slot.cue, index, shot, slot.time))
 
 
-func _ordered_cues(shot: Shot, shot_index: int, duration: float) -> Array[Cue]:
-	var ordered: Array[Cue] = []
-	for cue in shot.cues:
-		if cue != null:
-			ordered.append(cue)
-	ordered.sort_custom(
-		func(a: Cue, b: Cue) -> bool:
-			return (
-				_resolve_cue_time(a, shot_index, duration)
-				< _resolve_cue_time(b, shot_index, duration)
-			)
+## Resolves every cue once, then sorts by fire time with the authored index as a
+## stable tie-break. `Array.sort_custom()` is not stable, so without the explicit
+## tie-break equal-time cues could fire in a different order per engine build —
+## which would break deterministic frame rendering (M4).
+func _ordered_cues(shot: Shot, shot_index: int, duration: float) -> Array[_CueSlot]:
+	var slots: Array[_CueSlot] = []
+	var warned: Dictionary = {}
+	for order in shot.cues.size():
+		var cue := shot.cues[order]
+		if cue == null:
+			continue
+		var cue_time := _resolve_cue_slot(cue, shot_index, duration, warned)
+		slots.append(_CueSlot.new(cue, cue_time, order))
+	slots.sort_custom(
+		func(a: _CueSlot, b: _CueSlot) -> bool:
+			if a.time == b.time:
+				return a.order < b.order
+			return a.time < b.time
 	)
-	return ordered
+	return slots
 
 
 func _resolve_cue_time(cue: Cue, shot_index: int, duration: float) -> float:
+	return _resolve_cue_slot(cue, shot_index, duration, {})
+
+
+## Resolves a cue to shot-relative seconds, warning at most once per missing
+## marker per shot (the scheduler shares [param warned] across all its cues).
+func _resolve_cue_slot(
+	cue: Cue, shot_index: int, duration: float, warned: Dictionary
+) -> float:
 	var cue_time := cue.time
 	if not cue.marker.is_empty() and _sequence != null:
 		var marker_time := _sequence.get_marker_time(cue.marker)
 		if marker_time >= 0.0:
 			cue_time = marker_time - _sequence.get_shot_start_time(shot_index)
-		else:
+		elif not warned.has(cue.marker):
+			warned[cue.marker] = true
 			push_warning(
 				"Director: cue marker '%s' not found; using cue.time." % cue.marker
 			)
@@ -266,3 +286,17 @@ func _resolve_camera() -> ExplainerCamera:
 		camera = grouped as ExplainerCamera
 		return camera
 	return null
+
+
+class _CueSlot:
+	## One cue resolved onto its shot clock.
+	var cue: Cue
+	## Clamped shot-relative fire time in seconds.
+	var time: float
+	## Authored index, used as a stable tie-break for equal fire times.
+	var order: int
+
+	func _init(p_cue: Cue, p_time: float, p_order: int) -> void:
+		cue = p_cue
+		time = p_time
+		order = p_order

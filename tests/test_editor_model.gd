@@ -79,8 +79,8 @@ func _check_structural_edits() -> void:
 
 	var appended := _shot(0.75)
 	model.add_shot(appended)
-	check(sequence.shots[3] == appended, "add_shot appends")
-	check(model.shot_index == 3, "add_shot selects the appended shot")
+	check(sequence.shots[4] == appended, "add_shot appends")
+	check(model.shot_index == 4, "add_shot selects the appended shot")
 
 	var source := sequence.shots[1]
 	source.cues = [_cue(0.1)]
@@ -98,7 +98,7 @@ func _check_structural_edits() -> void:
 	check(sequence.shots[0] == copy, "invalid move ignores the source")
 
 	model.remove_shot(0)
-	check(sequence.shots.size() == 3, "remove_shot shrinks the sequence")
+	check(sequence.shots.size() == 5, "remove_shot shrinks the sequence")
 	check(model.shot_index == 0, "remove_shot clamps the selection")
 	while not sequence.shots.is_empty():
 		model.remove_shot(0)
@@ -155,7 +155,7 @@ func _check_marker_edits() -> void:
 	model.set_marker("intro", 0.2)
 	check(sequence.has_marker("intro"), "set_marker adds a marker")
 	check_approx(sequence.get_marker_time("intro"), 0.2, 0.0001, "marker time stored")
-	var before_count := changes[0]
+	var before_count: int = changes[0]
 	model.set_marker("intro", 0.4)
 	check_approx(sequence.get_marker_time("intro"), 0.4, 0.0001, "set_marker retimes")
 	check(
@@ -174,7 +174,7 @@ func _check_cue_times() -> void:
 	var model := SequenceEditorModel.new()
 	var sequence := _sequence_with_shots([1.0, 2.0])
 	sequence.add_marker("beat", 1.75)
-	sequence.add_marker("late", 5.0)
+	sequence.add_marker("late", 3.5)
 	model.set_sequence(sequence)
 
 	var first := _shot(1.0)
@@ -188,6 +188,9 @@ func _check_cue_times() -> void:
 		_cue(0.2, &"unknown"),
 	]
 	sequence.shots[1] = second
+	# A third shot keeps the "late" marker inside the sequence; it still resolves
+	# past the second shot's end so the clamp path is covered.
+	sequence.add_shot(_shot(1.0))
 
 	check_approx(
 		model.get_cue_absolute_time(first.cues[0], 0),
@@ -221,8 +224,12 @@ func _check_cue_times() -> void:
 	)
 
 	var issues := model.validate()
-	check(issues.size() == 1, "validation reports the unknown cue marker")
 	check(
-		issues.size() == 1 and issues[0].contains("unknown"),
-		"validation names the unknown marker"
+		issues.size() == 3,
+		"validation reports clamped marker cues and the unknown cue marker: %s" % [issues]
 	)
+	var names_unknown := false
+	for issue in issues:
+		if issue.contains("unknown"):
+			names_unknown = true
+	check(names_unknown, "validation names the unknown marker")

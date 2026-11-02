@@ -6,6 +6,7 @@ func _run_tests() -> void:
 	_check_sequence_helpers()
 	_check_validation()
 	await _check_director_resolution_and_order()
+	await _check_equal_time_order()
 	finish()
 
 
@@ -75,9 +76,83 @@ func _check_validation() -> void:
 	sequence.add_marker("missing", 0.5)
 	check(sequence.validate().is_empty(), "marker cue validates once the marker exists")
 
-	# Marker cues are validated by name; their resolved time is clamped later.
+	# Marker cues validate their resolved time: this marker is outside the
+	# sequence, so both the marker table and the cue are flagged.
 	sequence.add_marker("missing", 5.0)
-	check(sequence.validate().is_empty(), "marker cues do not use raw time bounds validation")
+	var out_of_bounds := sequence.validate()
+	check(out_of_bounds.size() == 2, "out-of-sequence marker is reported twice")
+	check(
+		out_of_bounds.size() == 2 and out_of_bounds[0].contains("outside"),
+		"marker table reports out-of-bounds time"
+	)
+	check(
+		out_of_bounds.size() == 2 and out_of_bounds[1].contains("resolves"),
+		"cue reports its resolved out-of-bounds time"
+	)
+
+	var end_marker := Sequence.new()
+	end_marker.add_marker("end", 1.0)
+	var end_shot := Shot.new()
+	end_shot.kind = Shot.Kind.HOLD
+	end_shot.duration = 1.0
+	end_shot.cues = [_cue(0.0, &"end")]
+	end_marker.add_shot(end_shot)
+	check(end_marker.validate().is_empty(), "marker at the sequence end is valid")
+
+	var duplicates := Sequence.new()
+	var marker_shot := Shot.new()
+	marker_shot.kind = Shot.Kind.HOLD
+	marker_shot.duration = 1.0
+	duplicates.add_shot(marker_shot)
+	duplicates.markers = [
+		{"name": "beat", "time": 0.0},
+		{"name": "beat", "time": 0.5},
+		{"name": "", "time": 0.2},
+	]
+	var marker_issues := duplicates.validate()
+	check(
+		marker_issues.size() == 2
+		and marker_issues[0].contains("duplicates")
+		and marker_issues[1].contains("empty name"),
+		"marker table reports duplicate and empty names: %s" % [marker_issues]
+	)
+
+
+func _check_equal_time_order() -> void:
+	var scratch := make_root("CueOrder")
+	var camera := ExplainerCamera.new()
+	camera.name = "Camera"
+	scratch.add_child(camera)
+	var director := Director.new()
+	director.name = "Director"
+	director.camera = camera
+	scratch.add_child(director)
+	await process_frame
+
+	var shot := Shot.new()
+	shot.kind = Shot.Kind.HOLD
+	shot.duration = 0.2
+	var authored: Array[Cue] = []
+	for cue_id in [&"first", &"second", &"third", &"fourth"]:
+		var cue := _cue(0.0)
+		cue.data = {"id": cue_id}
+		authored.append(cue)
+	shot.cues = authored
+
+	var sequence := Sequence.new()
+	sequence.add_shot(shot)
+
+	var fired: Array[StringName] = []
+	director.cue_event_fired.connect(
+		func(event: CueEvent) -> void: fired.append(StringName(event.get_data("id", "")))
+	)
+	await director.play(sequence)
+
+	check(
+		fired == [&"first", &"second", &"third", &"fourth"],
+		"equal-time cues fire in authored order: %s" % [fired]
+	)
+	await dispose(scratch)
 
 
 func _check_director_resolution_and_order() -> void:
