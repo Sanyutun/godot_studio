@@ -10,7 +10,9 @@ extends AudioStreamPlayer
 ##
 ## Narration deliberately outlives a shot: a VO line can bridge a cut. Send a
 ## cue with `hide: true` (or `stop: true`) and an optional `duration` to fade it
-## out on the same budget as the other UI receivers.
+## out on the same budget as the other UI receivers. Without a cue `duration`,
+## [method stop_voice] uses the active track's [member VoiceTrack.fade_out],
+## falling back to [member fade_out_duration].
 
 signal voice_started(stream: AudioStream)
 signal voice_finished()
@@ -40,6 +42,7 @@ var fade_out_duration: float = 0.15
 var _fade_tween: Tween = null
 var _target_volume_db: float = 0.0
 var _active_stream: AudioStream = null
+var _active_track: VoiceTrack = null
 var _stopping: bool = false
 
 
@@ -69,6 +72,8 @@ func play_voice(
 		stop()
 	_stopping = false
 	_active_stream = next_stream
+	# Direct playback has no track; `on_cue()` attaches one after the call.
+	_active_track = null
 	if stream != next_stream:
 		stream = next_stream
 	_target_volume_db = target_volume_db
@@ -86,12 +91,17 @@ func play_voice(
 
 
 ## Fades the active voice-over out and returns the fade [Tween], or `null` when
-## nothing is playing. A [param fade_out] of `0` stops immediately.
+## nothing is playing. [param fade_out] `-1` uses the active track's
+## [member VoiceTrack.fade_out] when there is one, otherwise
+## [member fade_out_duration]. A [param fade_out] of `0` stops immediately.
 func stop_voice(fade_out: float = -1.0) -> Tween:
 	if not playing:
 		return null
 	_kill_fade_tween()
-	var active_fade := fade_out_duration if fade_out < 0.0 else maxf(fade_out, 0.0)
+	var default_fade := fade_out_duration
+	if _active_track != null:
+		default_fade = _active_track.fade_out
+	var active_fade := default_fade if fade_out < 0.0 else maxf(fade_out, 0.0)
 	if active_fade <= 0.0:
 		_stopping = true
 		_finish_stop()
@@ -113,6 +123,11 @@ func is_voice_playing() -> bool:
 ## Clip currently playing, or `null`.
 func get_active_stream() -> AudioStream:
 	return _active_stream
+
+
+## Track that started the current playback, or `null` for direct playback.
+func get_active_track() -> VoiceTrack:
+	return _active_track
 
 
 ## Cue receiver entry point. Supported `data` keys: `stream`, `track`,
@@ -153,6 +168,8 @@ func on_cue(event: CueEvent) -> void:
 	if not bus_name.is_empty():
 		bus = bus_name
 	play_voice(next_stream, target_db, fade_in, from_position)
+	# `play_voice()` clears it; re-attach so `stop_voice(-1)` can use the track fade.
+	_active_track = track
 
 
 func _load_stream(value: Variant) -> AudioStream:
@@ -178,6 +195,7 @@ func _on_audio_finished() -> void:
 	_kill_fade_tween()
 	volume_db = _target_volume_db
 	_active_stream = null
+	_active_track = null
 	# Drop the stream reference so the audio server can release the playback.
 	stream = null
 	voice_finished.emit()
@@ -194,6 +212,7 @@ func _finish_stop() -> void:
 	stop()
 	volume_db = _target_volume_db
 	_active_stream = null
+	_active_track = null
 	stream = null
 	if was_active:
 		voice_stopped.emit()

@@ -21,7 +21,8 @@ var volume_db: float = 0.0
 @export_range(0.0, 10.0, 0.01, "or_greater", "suffix:s")
 var fade_in: float = 0.0
 
-## Fade-out duration in seconds used by [method VoiceOver.stop_voice].
+## Fade-out duration in seconds used by [method VoiceOver.stop_voice] when no
+## explicit duration is passed. A cue `duration` takes precedence.
 @export_range(0.0, 10.0, 0.01, "or_greater", "suffix:s")
 var fade_out: float = 0.15
 

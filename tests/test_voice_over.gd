@@ -14,6 +14,7 @@ func _run_tests() -> void:
 	await _check_cue_play_with_track()
 	await _check_cue_hide_fades_out()
 	await _check_stop_voice()
+	await _check_track_fade_out()
 	await _check_director_target_and_outliving_shot()
 	_check_track_resource()
 	# Let the dummy audio driver release the last playback before ObjectDB
@@ -174,6 +175,41 @@ func _check_stop_voice() -> void:
 	await wait(0.02)
 	check(not voice.is_voice_playing(), "fade-out stops playback")
 	check(stopped[0] == 1, "voice_stopped emitted once")
+
+	await dispose(scratch)
+
+
+func _check_track_fade_out() -> void:
+	var stage := await _build_stage("VoiceTrackFade")
+	var scratch: Node = stage[0]
+	var voice := stage[1] as VoiceOver
+	voice.fade_out_duration = 0.4
+	var stream := _make_blip(0.9)
+	var track := VoiceTrack.new()
+	track.stream = stream
+	track.fade_out = 0.08
+
+	var cue := Cue.new()
+	cue.action = Cue.ACTION_VOICE_OVER
+	cue.data = {"track": track}
+	var event := CueEvent.new()
+	event.cue = cue
+	event.remaining = 1.0
+	voice.on_cue(event)
+	check(voice.get_active_track() == track, "cue attaches its track")
+
+	var started_usec := Time.get_ticks_usec()
+	var tween := voice.stop_voice()
+	check(tween != null, "stop_voice uses the track fade-out default")
+	if tween != null:
+		await tween.finished
+	var elapsed := float(Time.get_ticks_usec() - started_usec) / 1_000_000.0
+	check(
+		elapsed >= 0.06 and elapsed < 0.3,
+		"stop_voice honours track.fade_out, not fade_out_duration (%.3fs)" % elapsed
+	)
+	check(not voice.is_voice_playing(), "track fade-out stops playback")
+	check(voice.get_active_track() == null, "active track clears after stop")
 
 	await dispose(scratch)
 
