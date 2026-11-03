@@ -13,8 +13,10 @@ func _run_tests() -> void:
 	_test_queue_validation()
 	_test_event_counting_and_duration()
 	_test_pcm_mixing()
+	_test_voice_replacement()
 	_test_resampling()
 	_test_hide_fade()
+	_test_equal_time_order()
 	_test_db_gain()
 	_test_sequence_resolution()
 	_test_marker_resolution()
@@ -195,6 +197,43 @@ func _test_pcm_mixing() -> void:
 	check(mixer.render_pcm(-1.0, 1).is_empty(), "negative lengths clamp to empty")
 
 
+func _test_voice_replacement() -> void:
+	# VoiceOver owns one player, so a cue that starts while the previous line is
+	# still running cuts it rather than layering the two performances.
+	var sequence := Sequence.new()
+	sequence.add_shot(_hold_shot(2.0))
+	sequence.shots[0].cues.append(_voice_cue(0.0, {"stream": _make_tone(1.0, 1000.0, 0.4)}))
+	sequence.shots[0].cues.append(_voice_cue(0.5, {"stream": _make_tone(1.0, 1000.0, 0.4)}))
+
+	var mixer := AudioCaptureMixer.new()
+	check(mixer.consume_sequence(sequence) == 2, "overlapping VO cues both queue")
+	var pcm := mixer.render_pcm(2.0, 1)
+	var rate := mixer.get_sample_rate()
+	var before := _peak(pcm, int(0.20 * float(rate)), int(0.45 * float(rate)))
+	check(before > 0.3, "the first line plays until the next cue (%f)" % before)
+	# Same tone and phase, so layering would peak at ~0.8 while a replacement
+	# stays at the single clip's 0.4.
+	var after := _peak(pcm, int(0.60 * float(rate)), int(1.40 * float(rate)))
+	check(after > 0.3 and after < 0.5,
+			"a new cue replaces the running line (%f)" % after)
+
+	# Direct queue_voice() calls keep their documented layering behaviour.
+	var layered := AudioCaptureMixer.new()
+	layered.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.0)
+	layered.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.5)
+	var layered_pcm := layered.render_pcm(2.0, 1)
+	var layered_peak := _peak(layered_pcm, int(0.60 * float(rate)), int(0.95 * float(rate)))
+	check(layered_peak > 0.6, "direct queue_voice calls still layer (%f)" % layered_peak)
+
+	# replace_active is the explicit opt-in for that runtime behaviour.
+	var explicit := AudioCaptureMixer.new()
+	explicit.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.0)
+	explicit.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.5, 1.0, 0.0, 0, &"", true)
+	var explicit_pcm := explicit.render_pcm(2.0, 1)
+	var explicit_peak := _peak(explicit_pcm, int(0.60 * float(rate)), int(0.95 * float(rate)))
+	check(explicit_peak < 0.5, "replace_active cuts the earlier clip (%f)" % explicit_peak)
+
+
 func _test_resampling() -> void:
 	# Sources can run at any rate (the demo generates 44.1 kHz blips); the
 	# mixer resamples them to its 48 kHz output without truncating the tail.
@@ -247,6 +286,26 @@ func _test_hide_fade() -> void:
 	var untouched := late_hide.render_pcm(0.1, 1)
 	var kept := _rms(untouched, int(0.02 * float(rate)), int(0.09 * float(rate)))
 	check(kept > 0.1, "hide beyond the render window changes nothing (%f)" % kept)
+
+
+func _test_equal_time_order() -> void:
+	var rate := 48000
+	# Equal-time events keep authored order, like the Director's stable sort: a
+	# hide queued first has nothing to silence, so the clip after it is audible.
+	var earlier_hide := AudioCaptureMixer.new()
+	earlier_hide.queue_hide(1.0, 0.0)
+	earlier_hide.queue_voice(_make_tone(1.0, 1000.0, 0.5), 1.0)
+	var earlier_pcm := earlier_hide.render_pcm(2.0, 1)
+	check(_peak(earlier_pcm, int(1.05 * float(rate)), int(1.40 * float(rate))) > 0.3,
+			"a hide queued before a same-time clip leaves it audible")
+
+	# Queued after, the hide wins and the brand-new clip is cut immediately.
+	var later_hide := AudioCaptureMixer.new()
+	later_hide.queue_voice(_make_tone(1.0, 1000.0, 0.5), 1.0)
+	later_hide.queue_hide(1.0, 0.0)
+	var later_pcm := later_hide.render_pcm(2.0, 1)
+	check(_peak(later_pcm, int(1.05 * float(rate)), int(1.40 * float(rate))) < 0.01,
+			"a hide queued after a same-time clip silences it")
 
 
 func _test_db_gain() -> void:
@@ -400,6 +459,17 @@ func _test_hide_variants() -> void:
 	alt.shots[0].cues.append(_voice_cue(0.2, {"hide": true}))
 	var alt_mixer := AudioCaptureMixer.new()
 	check(alt_mixer.consume_sequence(alt) == 1, "hide:true queues without a stream")
+
+	# A truthy `stop` key behaves like `hide`, via the shared flag parser.
+	var stop_flag := Sequence.new()
+	stop_flag.add_shot(_hold_shot(1.0))
+	stop_flag.shots[0].cues.append(_voice_cue(0.0, {"stream": stream}))
+	stop_flag.shots[0].cues.append(_voice_cue(0.5, {"stop": true, "duration": 0.0}))
+	var stop_mixer := AudioCaptureMixer.new()
+	check(stop_mixer.consume_sequence(stop_flag) == 2, "stop:true queues a hide")
+	var stop_pcm := stop_mixer.render_pcm(1.0, 1)
+	check(_rms(stop_pcm, int(0.60 * float(rate)), int(0.95 * float(rate))) < 0.01,
+			"stop:true silences the narration")
 
 
 func _test_file_roundtrip() -> void:

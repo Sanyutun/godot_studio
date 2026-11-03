@@ -67,9 +67,9 @@ var preset: String = "medium"
 ## even output dimensions.
 @export var pixel_format: String = "yuv420p"
 
-## Optional audio file to mux into the movie. Leave empty for a silent render.
-## Narration is authored in real time, so M4 accepts a pre-mixed track here;
-## deterministic audio mixing lands with the polish pass.
+## Optional audio file to mux into the movie. Leave empty when a
+## [FrameRenderer] has an [AudioCaptureMixer] attached: the renderer then mixes
+## `voice_over` cues offline (M6) and fills this in with the generated WAV.
 @export var audio_path: String = ""
 
 ## Audio codec used when [member audio_path] is set.

@@ -136,7 +136,7 @@ func get_active_track() -> VoiceTrack:
 func on_cue(event: CueEvent) -> void:
 	if event == null or event.cue == null:
 		return
-	if bool(event.get_data("hide", event.get_data("stop", false))):
+	if CueEvent.is_flag(event.get_data("hide", false)) or CueEvent.is_flag(event.get_data("stop", false)):
 		stop_voice(event.get_budget(float(event.get_data("duration", -1.0))))
 		return
 

@@ -204,7 +204,13 @@ same marker maths as the [Director], places each clip at its absolute sequence
 time, and sums the whole take into one 16-bit PCM WAV. Hide/stop cues fade the
 active clip using the shot's remaining budget, and `from` /
 [member VoiceTrack.start_offset] skip into the source clip exactly like
-`AudioStreamPlayer.play(from)`.
+`AudioStreamPlayer.play(from)`; a per-cue `from` replaces the track offset.
+
+The runtime has a single [VoiceOver] player, so a new line cuts the one already
+playing; `consume_sequence()` mirrors that, while direct `queue_voice()` calls
+layer unless they pass `replace_active = true`. Only 16-bit PCM
+`AudioStreamWAV` clips can be mixed — other stream formats are skipped with a
+warning so a render never muxes audio the mixer could not read.
 
 ```gdscript
 var renderer := FrameRenderer.new()

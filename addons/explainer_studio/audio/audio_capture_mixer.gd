@@ -7,8 +7,13 @@ extends RefCounted
 ## cannot rely on it producing a waveform. Instead, cue times resolved through
 ## [PreviewTimeline.resolve_cue_local_time] (the same maths the [Director] uses)
 ## drive this mixer: every `voice_over` cue's clip is placed at its absolute
-## sequence time, hide/stop cues fade the active clip out, and everything is
-## summed into one interleaved 16-bit PCM WAV covering the whole take.
+## sequence time, hide/stop cues fade the active clip out, and the result is
+## written as one interleaved 16-bit PCM WAV covering the whole take.
+##
+## [VoiceOver] owns a single player, so starting a line cuts the previous one;
+## [method consume_sequence] mirrors that by replacing the active clip at each
+## voice cue. Direct [method queue_voice] calls layer instead (a mixer's job),
+## unless `replace_active` is set.
 ##
 ## All functions are pure — no nodes, no engine clock — which keeps headless
 ## tests fast and lets [method mix_to_wav] be reused by CI or tool scripts.
@@ -47,13 +52,18 @@ func get_sample_rate() -> int:
 ## drops that many leading source frames (the offline twin of playing from a
 ## position); [param bus] records the audio bus for render-side bookkeeping —
 ## offline mixing sums everything to one file, so it never changes the samples.
+##
+## Every clip layers on top of the previous ones. Pass [param replace_active] to
+## cut everything already queued instead, which is what [VoiceOver] does when a
+## new line interrupts the current one; [method consume_sequence] always sets it.
 func queue_voice(
 	stream: AudioStreamWAV,
 	at_seconds: float,
 	gain: float = 1.0,
 	fade_in: float = 0.0,
 	skip_frames: int = 0,
-	bus: StringName = &""
+	bus: StringName = &"",
+	replace_active: bool = false
 ) -> bool:
 	if stream == null or stream.format != AudioStreamWAV.FORMAT_16_BITS:
 		return false
@@ -69,6 +79,7 @@ func queue_voice(
 		"skip_frames": maxi(skip_frames, 0),
 		"bus": bus,
 		"channels": channel_count,
+		"replace": replace_active,
 	})
 	return true
 
@@ -120,7 +131,9 @@ func render_pcm(duration_seconds: float, channel_count: int) -> PackedFloat32Arr
 	if frames <= 0:
 		return output
 
-	# Stable order: clips first at equal times, then hides, queue order breaks ties.
+	# Stable order: absolute time, then queue order. Queue order is the authored
+	# cue order because consume_sequence walks shots and cues in sequence order,
+	# so equal-time cues behave exactly like the Director's stable sort.
 	var indexed: Array[Dictionary] = []
 	for index in _events.size():
 		indexed.append({"event": _events[index], "order": index})
@@ -131,6 +144,8 @@ func render_pcm(duration_seconds: float, channel_count: int) -> PackedFloat32Arr
 		if String(event.get("kind", "")) == "hide":
 			_apply_hide(output, frames, channels, event)
 		else:
+			if bool(event.get("replace", false)):
+				_cut_active(output, channels, float(event.get("time", 0.0)))
 			_mix_clip(output, frames, channels, event)
 
 	for index in output.size():
@@ -212,21 +227,6 @@ static func _put_u32le(target: PackedByteArray, offset: int, value: int) -> int:
 	return offset + 4
 
 
-## Wraps [param pcm] in a loopable [AudioStreamGenerator] playback, useful for
-## auditioning a mixed take through a regular [AudioStreamPlayer].
-static func make_generator_playback(
-	pcm: PackedFloat32Array, channel_count: int, sample_rate: int = DEFAULT_SAMPLE_RATE
-) -> AudioStreamPlayback:
-	var generator := AudioStreamGenerator.new()
-	generator.mix_rate = float(maxi(sample_rate, 1))
-	generator.set_bus("")
-	var playback: AudioStreamPlayback = generator.get_playback_object()
-	if playback == null:
-		return null
-	playback.add_frames(pcm)
-	return playback
-
-
 ## Packs interleaved [param pcm] samples in the [-1, 1] range into an
 ## [AudioStreamWAV] — 16-bit PCM at [member DEFAULT_SAMPLE_RATE] (or
 ## [param sample_rate]), mono by default and stereo when [param channel_count]
@@ -287,7 +287,7 @@ func consume_sequence(
 				continue
 			var absolute := resolve_voice_cue_time(sequence, cue, shot_index)
 			var data := cue.data
-			var is_hide := bool(data.get("hide", false)) or StringName(data.get("stop", &"")) == &"stop"
+			var is_hide := CueEvent.is_flag(data.get("hide", false)) or CueEvent.is_flag(data.get("stop", false))
 			if is_hide:
 				# Mirror [method CueEvent.get_budget]: a missing duration spends
 				# the shot's remaining time, an explicit one is clamped to it.
@@ -301,6 +301,10 @@ func consume_sequence(
 				continue
 			var stream := _pick_stream(data, default_stream)
 			if stream == null:
+				push_warning(
+					"AudioCaptureMixer: shot %d cue '%s' has no 16-bit PCM stream; skipped."
+					% [shot_index, cue.action]
+				)
 				continue
 			var track := data.get("track") as VoiceTrack
 			var volume_db := float(data.get("volume_db",
@@ -314,7 +318,9 @@ func consume_sequence(
 				"from", track.start_offset if track != null else 0.0
 			))
 			var skip_frames := maxi(int(round(from_seconds * float(stream.mix_rate))), 0)
-			queue_voice(stream, absolute, gain, fade_in, skip_frames, _cue_bus(data, track))
+			# One VoiceOver player means a new line stops the current one; direct
+			# queue_voice() callers opt into layering instead.
+			queue_voice(stream, absolute, gain, fade_in, skip_frames, _cue_bus(data, track), true)
 	return _events.size() - before
 
 
@@ -364,11 +370,17 @@ static func _compare_events(a: Dictionary, b: Dictionary) -> bool:
 	var b_time := float(b_event.get("time", 0.0))
 	if not is_equal_approx(a_time, b_time):
 		return a_time < b_time
-	var a_is_voice := String(a_event.get("kind", "")) == "voice"
-	var b_is_voice := String(b_event.get("kind", "")) == "voice"
-	if a_is_voice != b_is_voice:
-		return a_is_voice
 	return int(a["order"]) < int(b["order"])
+
+
+## Silences every sample from [param at_seconds] onward. A replacement clip is
+## mixed after the cut, so it starts on a clean buffer — the offline twin of
+## [method VoiceOver.play_voice] calling `stop()` before `play()`.
+func _cut_active(output: PackedFloat32Array, channels: int, at_seconds: float) -> void:
+	var start_frame := maxi(int(round(at_seconds * float(_sample_rate))), 0)
+	var total := output.size()
+	for index in range(start_frame * channels, total):
+		output[index] = 0.0
 
 
 func _apply_hide(output: PackedFloat32Array, frames: int, channels: int, event: Dictionary) -> void:
