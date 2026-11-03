@@ -34,11 +34,11 @@ func _make_tone(
 	wav.mix_rate = mix_rate
 	wav.stereo = false
 	var frames := int(seconds * float(mix_rate))
-	var samples := PackedInt16Array()
-	samples.resize(frames)
+	var samples := PackedByteArray()
+	samples.resize(frames * 2)
 	for index in frames:
 		var value := amplitude * sin(TAU * frequency * float(index) / float(mix_rate))
-		samples[index] = int16(clampf(value, -32767.0, 32767.0) * 32767.0)
+		samples.encode_s16(index * 2, int(clampf(value, -1.0, 1.0) * 32767.0))
 	wav.data = samples
 	return wav
 
@@ -87,10 +87,10 @@ func _test_wav_container() -> void:
 	check(wav.format == AudioStreamWAV.FORMAT_16_BITS, "build_wav emits 16-bit PCM")
 	check(not wav.stereo, "mono build_wav leaves stereo off")
 	check(wav.mix_rate == AudioCaptureMixer.DEFAULT_SAMPLE_RATE, "default rate is 48 kHz")
-	check(wav.data.size() == pcm.size(), "one int16 sample per float sample")
-	check_approx(float(wav.data[0]) / 32767.0, 0.5, 0.001, "0.5 maps near 16383 counts")
-	check(wav.data[2] == 32767, "+1.0 clamps to full-scale positive")
-	check(wav.data[3] == -int16(32768.0) or wav.data[3] == -32767, "-1.0 maps to full-scale negative")
+	check(wav.data.size() == pcm.size() * 2, "two bytes per float sample")
+	check_approx(float(wav.decode_s16(0)) / 32767.0, 0.5, 0.001, "0.5 maps near 16383 counts")
+	check(wav.decode_s16(4) == 32767, "+1.0 clamps to full-scale positive")
+	check(wav.decode_s16(6) == -32767 or wav.decode_s16(6) == -32768, "-1.0 maps to full-scale negative")
 
 	var stereo := mixer.build_wav(PackedFloat32Array([0.1, 0.2]), 2)
 	check(stereo.stereo, "channel_count 2 flags the stream stereo")
@@ -100,9 +100,9 @@ func _test_wav_container() -> void:
 	mixed[0] = 0.25
 	mixed[1] = -0.5
 	var stereo_wav := mixer.build_wav(mixed, 2)
-	check(stereo_wav.data.size() == 2, "stereo build keeps interleaved length")
-	check_approx(float(stereo_wav.data[0]) / 32767.0, 0.25, 0.001, "left channel survives build")
-	check_approx(float(stereo_wav.data[1]) / 32767.0, -0.5, 0.001, "right channel survives build")
+	check(stereo_wav.data.size() == 4, "stereo build keeps interleaved length")
+	check_approx(float(stereo_wav.decode_s16(0)) / 32767.0, 0.25, 0.001, "left channel survives build")
+	check_approx(float(stereo_wav.decode_s16(2)) / 32767.0, -0.5, 0.001, "right channel survives build")
 
 
 func _test_queue_validation() -> void:
@@ -388,18 +388,20 @@ func _test_file_roundtrip() -> void:
 	var file := FileAccess.open(path, FileAccess.READ)
 	check(file != null, "wav opens for reading")
 	if file != null:
+		# The mix lands in the `data` chunk; skip the 44-byte canonical header.
+		file.seek(44)
 		var header := file.get_buffer(12)
-		check(String(header.slice(0, 4)) == "RIFF", "file starts with RIFF")
-		check(String(header.slice(8, 12)) == "WAVE", "file is WAVE format")
-		var data := file.get_buffer(int(file.get_length() - 12))
-		var samples := PackedInt16Array()
+		check(header.get_string_from_ascii(0, 4) == "RIFF", "file starts with RIFF")
+		check(header.get_string_from_ascii(8, 4) == "WAVE", "file is WAVE format")
+		var data := file.get_buffer(int(file.get_length() - 44))
+		var samples := PackedFloat32Array()
 		for byte_index in range(0, data.size() - 1, 2):
-			samples.append(int16(data[byte_index] | (data[byte_index + 1] << 8)))
+			samples.append(float(data.decode_s16(byte_index)) / 32768.0)
 		var expected_frames := int(0.5 * float(mixer.get_sample_rate())) * 2
 		check(samples.size() >= expected_frames, "payload holds the rendered frames")
 		var heard := PackedFloat32Array()
 		for index in mini(expected_frames, samples.size()):
-			heard.append(float(samples[index]) / 32768.0)
+			heard.append(samples[index])
 		var peak := _peak(heard, int(0.12 * 48000.0), int(0.19 * 48000.0))
 		check(peak > 0.3, "decoded payload carries audible audio (%f)" % peak)
 		file.close()

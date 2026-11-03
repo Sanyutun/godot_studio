@@ -360,20 +360,22 @@ func _prepare_mixed_audio(
 ) -> bool:
 	if active_settings.has_audio() or voice_mixer == null:
 		return true
-	var queued := voice_mixer.get_event_count()
 	voice_mixer.clear()
 	if voice_mixer.consume_sequence(active_sequence) <= 0:
 		return true
-	var wav_path := "%s_voice.wav" % active_settings.get_output_path().get_basename()
-	if not _ensure_directory(_parent_dir(wav_path)):
-		return _fail("Cannot create directory for mixed narration: %s" % wav_path)
+	var expected_wav_path := "%s_voice.wav" % active_settings.get_output_path().get_basename()
+	if not _ensure_directory(_parent_dir(expected_wav_path)):
+		return _fail("Cannot create directory for mixed narration: %s" % expected_wav_path)
 	var total := maxf(voice_mixer.get_total_duration(duration), duration)
-	if not voice_mixer.mix_to_wav(wav_path, total):
-		return _fail("Narration mix failed to save: %s" % wav_path)
+	if not voice_mixer.mix_to_wav(expected_wav_path, total):
+		return _fail("Narration mix failed to save: %s" % expected_wav_path)
+	# The mixer (or a subclass with a custom exporter) decides where the audio
+	# actually landed; fall back to the conventional name when it stays silent.
+	var wav_path := voice_mixer.get_last_mix_path()
+	if wav_path.is_empty():
+		wav_path = expected_wav_path
 	active_settings.audio_path = wav_path
-	print(
-		"[FrameRenderer] mixed %d VO event(s) → %s" % [queued + voice_mixer.get_event_count() - queued, wav_path]
-	)
+	print("[FrameRenderer] mixed %d VO event(s) → %s" % [voice_mixer.get_event_count(), wav_path])
 	return true
 
 

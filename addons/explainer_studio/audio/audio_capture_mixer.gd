@@ -22,6 +22,14 @@ const DEFAULT_HIDE_FADE := 0.15
 
 var _sample_rate: int = DEFAULT_SAMPLE_RATE
 var _events: Array[Dictionary] = []
+var _last_mix_path: String = ""
+
+
+## Path handed to the most recent [method mix_to_wav] call. [FrameRenderer] uses
+## it to locate the narration file even when a mixer subclass overrides the
+## write itself (test doubles, custom exporters).
+func get_last_mix_path() -> String:
+	return _last_mix_path
 
 
 ## Clears all queued events.
@@ -35,12 +43,17 @@ func get_sample_rate() -> int:
 
 
 ## Queues a clip start at absolute seconds. [param gain] is linear;
-## [param fade_in] ramps the clip up over its first seconds.
+## [param fade_in] ramps the clip up over its first seconds; [param skip_frames]
+## drops that many leading source frames (the offline twin of playing from a
+## position); [param bus] records the audio bus for render-side bookkeeping —
+## offline mixing sums everything to one file, so it never changes the samples.
 func queue_voice(
 	stream: AudioStreamWAV,
 	at_seconds: float,
 	gain: float = 1.0,
-	fade_in: float = 0.0
+	fade_in: float = 0.0,
+	skip_frames: int = 0,
+	bus: StringName = &""
 ) -> bool:
 	if stream == null or stream.format != AudioStreamWAV.FORMAT_16_BITS:
 		return false
@@ -53,6 +66,8 @@ func queue_voice(
 		"stream": stream,
 		"gain": gain,
 		"fade_in": maxf(fade_in, 0.0),
+		"skip_frames": maxi(skip_frames, 0),
+		"bus": bus,
 		"channels": channel_count,
 	})
 	return true
@@ -85,7 +100,10 @@ func get_total_duration(min_duration: float = 0.0) -> float:
 			continue
 		var start := float(event.get("time", 0.0))
 		var channels := maxi(_stream_channels(stream), 1)
-		var clip_seconds := float(stream.data.size()) / (float(maxi(stream.mix_rate, 1)) * float(channels))
+		var sample_rate := float(maxi(stream.mix_rate, 1))
+		var total_frames := float(stream.data.size()) / float(channels)
+		var clip_frames := maxf(total_frames - float(maxi(int(event.get("skip_frames", 0)), 0)), 0.0)
+		var clip_seconds := clip_frames / sample_rate
 		latest = maxf(latest, start + maxf(clip_seconds, 0.0))
 	return maxf(latest, 0.0)
 
@@ -121,6 +139,7 @@ func render_pcm(duration_seconds: float, channel_count: int) -> PackedFloat32Arr
 ## Renders the mixed timeline and writes a 16-bit PCM WAV file to
 ## [param wav_path] (`user://` paths are globalized). Returns `true` on success.
 func mix_to_wav(wav_path: String, duration_seconds: float, channel_count: int = 2) -> bool:
+	_last_mix_path = wav_path
 	var pcm := render_pcm(duration_seconds, clampi(channel_count, 1, 2))
 	var bytes := encode_wav_bytes(pcm, clampi(channel_count, 1, 2))
 	var absolute := ProjectSettings.globalize_path(wav_path) if wav_path.begins_with("user://") else wav_path
@@ -197,11 +216,34 @@ static func make_generator_playback(
 	var generator := AudioStreamGenerator.new()
 	generator.mix_rate = float(maxi(sample_rate, 1))
 	generator.set_bus("")
-	var playback := generator.get_playback_object()
+	var playback: AudioStreamPlayback = generator.get_playback_object()
 	if playback == null:
 		return null
 	playback.add_frames(pcm)
 	return playback
+
+
+## Packs interleaved [param pcm] samples in the [-1, 1] range into an
+## [AudioStreamWAV] — 16-bit PCM at [member DEFAULT_SAMPLE_RATE] (or
+## [param sample_rate]), mono by default and stereo when [param channel_count]
+## is 2. This is the in-memory counterpart of [method mix_to_wav]: the same
+## clamped quantization, minus the file I/O and the RIFF container.
+static func build_wav(
+		pcm: PackedFloat32Array, channel_count: int = 1, sample_rate: int = DEFAULT_SAMPLE_RATE
+) -> AudioStreamWAV:
+	var channels := clampi(channel_count, 1, 2)
+	var rate := maxi(sample_rate, 1)
+	var samples := PackedByteArray()
+	samples.resize(pcm.size() * 2)
+	for index in pcm.size():
+		var value := int(round(clampf(float(pcm[index]), -1.0, 1.0) * 32767.0))
+		samples.encode_s16(index * 2, value)
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = rate
+	stream.stereo = channels == 2
+	stream.data = samples
+	return stream
 
 
 ## Resolves a VO cue to absolute sequence seconds using the same marker maths
@@ -254,11 +296,46 @@ func consume_sequence(
 			var fade_in := float(data.get("fade_in",
 				track.fade_in if track != null else default_fade_in))
 			var gain := db_to_linear(volume_db)
-			var at_seconds := absolute + float(data.get("from", 0.0))
+			var from_seconds := float(data.get("from", 0.0))
 			if track != null:
-				at_seconds += track.start_offset
-			queue_voice(stream, at_seconds, gain, fade_in)
+				from_seconds += track.start_offset
+			var skip_frames := maxi(int(round(from_seconds * float(stream.mix_rate))), 0)
+			queue_voice(stream, absolute, gain, fade_in, skip_frames, _cue_bus(data, track))
 	return _events.size() - before
+
+
+## Resolves the clip for one `voice_over` cue following the [VoiceOver]
+## precedence: `data.stream` → `data.track` ([member VoiceTrack.stream]) →
+## [param default_stream]. A `stream_path`/`path` string is loaded from disk
+## when no inline stream was authored. Anything that is not a 16-bit
+## [AudioStreamWAV] yields `null`, so [method queue_voice] rejects it instead
+## of mixing a silent or malformed buffer.
+## Per-cue `bus` wins over [member VoiceTrack.bus]; empty means "whatever the
+## mixer records on the event" (offline mixing has no live bus routing).
+static func _cue_bus(data: Dictionary, track: VoiceTrack) -> StringName:
+	if data.has("bus"):
+		return StringName(data.get("bus", &""))
+	return track.bus if track != null else &""
+
+
+static func _pick_stream(data: Dictionary, default_stream: AudioStreamWAV) -> AudioStreamWAV:
+	var candidate: AudioStream = null
+	if data.has("stream"):
+		candidate = data.get("stream") as AudioStream
+	if candidate == null:
+		var track: VoiceTrack = data.get("track") as VoiceTrack
+		if track != null:
+			candidate = track.stream
+	if candidate == null:
+		var path := String(data.get("stream_path", data.get("path", "")))
+		if not path.is_empty():
+			candidate = load(path) as AudioStream
+	if candidate == null:
+		candidate = default_stream
+	var wav := candidate as AudioStreamWAV
+	if wav == null or wav.format != AudioStreamWAV.FORMAT_16_BITS:
+		return null
+	return wav
 
 
 ## Decibel to linear gain. Exposed because [VoiceOver] keeps authoring in dB.
@@ -286,17 +363,16 @@ func _apply_hide(output: PackedFloat32Array, frames: int, channels: int, event: 
 	var hide_frame := int(round(hide_seconds * float(_sample_rate)))
 	if hide_frame >= frames:
 		return
-	var fade_frames := maxi(int(round(fade_seconds * float(_sample_rate))), 1)
+	var fade_frames := maxi(int(round(fade_seconds * float(_sample_rate))), 1) if fade_seconds > 0.0 else 0
 	var total := output.size()
 	for frame in range(hide_frame, frames):
-		# Envelope: 1 at the hide instant, 0 `fade_frames` later; earlier frames
-		# are untouched, later frames stay silent.
-		var remaining := float(frames - frame)
-		var envelope := 1.0
-		if frame < hide_frame + fade_frames:
+		# Envelope: 1 at the hide instant, 0 once the fade completes; every later
+		# frame stays fully silent so a hide also cuts clips that outlive it.
+		var envelope := 0.0
+		if fade_frames == 0:
+			envelope = 1.0 if frame == hide_frame else 0.0
+		elif frame < hide_frame + fade_frames:
 			envelope = float(hide_frame + fade_frames - frame) / float(fade_frames)
-		elif remaining < 0.0:
-			envelope = 0.0
 		for channel in channels:
 			var index := frame * channels + channel
 			if index < total:
@@ -312,18 +388,22 @@ func _mix_clip(output: PackedFloat32Array, frames: int, channels: int, event: Di
 	var fade_in_frames := int(round(float(event.get("fade_in", 0.0)) * float(_sample_rate)))
 	var start_frame := int(round(float(event.get("time", 0.0)) * float(_sample_rate)))
 	var raw := stream.data
-	var source_frames := raw.size() / maxi(source_channels, 1)
+	var skip_frames := maxi(int(event.get("skip_frames", 0)), 0)
+	var available := maxi(raw.size() / maxi(source_channels, 1) - skip_frames, 0)
+	var end_frame := min(start_frame + available, frames)
 	var total := output.size()
-	for frame in range(start_frame, min(start_frame + source_frames, frames)):
-		if frame < 0:
-			continue
-		var source_frame := frame - start_frame
+	var source_rate := float(maxi(stream.mix_rate, 1))
+	var step := source_rate / float(_sample_rate)
+	for frame in range(maxi(start_frame, 0), end_frame):
+		var source_frame := skip_frames + int(round(float(frame - start_frame) * step))
+		if source_frame * source_channels + 1 >= raw.size():
+			break
 		var envelope := gain
-		if fade_in_frames > 0 and source_frame < fade_in_frames:
-			envelope = gain * float(source_frame + 1) / float(fade_in_frames)
+		if fade_in_frames > 0 and frame - start_frame < fade_in_frames:
+			envelope = gain * float(frame - start_frame + 1) / float(fade_in_frames)
 		for channel in channels:
 			var source_channel := mini(channel, source_channels - 1)
-			var sample := float(raw[source_frame * source_channels + source_channel]) / 32768.0
+			var sample := float(raw.decode_s16(source_frame * source_channels * 2 + source_channel * 2)) / 32768.0
 			var index := frame * channels + channel
 			if index < total:
 				output[index] += sample * envelope

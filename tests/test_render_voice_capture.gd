@@ -105,7 +105,7 @@ func _test_silent_without_mixer() -> void:
 	check(ok, "M4 behaviour survives without a mixer: %s" % renderer.get_last_error())
 	check(not FileAccess.file_exists(MIXED_WAV), "no mix is produced without a mixer")
 	var encode_args := _encode_args(captured_args)
-	check(not String(encode_args.join(" ")).contains("_voice.wav"),
+	check(not String(Array(encode_args).join(" ")).contains("_voice.wav"),
 			"video-only command never references the mix")
 	await _dispose(renderer)
 
@@ -224,11 +224,11 @@ func _make_tone(seconds: float, frequency: float, amplitude: float) -> AudioStre
 	wav.mix_rate = SAMPLE_RATE
 	wav.stereo = false
 	var frames := int(seconds * float(SAMPLE_RATE))
-	var samples := PackedInt16Array()
-	samples.resize(frames)
+	var samples := PackedByteArray()
+	samples.resize(frames * 2)
 	for index in frames:
 		var value := amplitude * sin(TAU * frequency * float(index) / float(SAMPLE_RATE))
-		samples[index] = int16(clampf(value, -32767.0, 32767.0) * 32767.0)
+		samples.encode_s16(index * 2, int(clampf(value, -1.0, 1.0) * 32767.0))
 	wav.data = samples
 	return wav
 
@@ -244,11 +244,11 @@ func _load_wav_samples(path: String) -> PackedFloat32Array:
 	file.close()
 	if bytes.size() < 12:
 		return output
-	if String(bytes.slice(0, 4)) != "RIFF" or String(bytes.slice(8, 12)) != "WAVE":
+	if bytes.get_string_from_ascii(0, 4) != "RIFF" or bytes.get_string_from_ascii(8, 4) != "WAVE":
 		return output
 	var offset := 12
 	while offset + 8 <= bytes.size():
-		var chunk_id := String(bytes.slice(offset, offset + 4))
+		var chunk_id := bytes.get_string_from_ascii(offset, 4)
 		var chunk_size := int(
 				bytes[offset + 4]
 				| (bytes[offset + 5] << 8)
