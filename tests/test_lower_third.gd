@@ -13,6 +13,7 @@ func _run_tests() -> void:
 	await _check_retarget_without_pop()
 	await _check_direct_hide()
 	await _check_cue_hide()
+	await _check_string_hide_flag()
 	await _check_resize_keeps_rest_position()
 	finish()
 
@@ -165,6 +166,28 @@ func _check_cue_hide() -> void:
 	await wait(0.12)
 
 	check(not lower.is_lower_third_visible(), "hide cue dismisses the card")
+	await dispose(scratch)
+
+
+func _check_string_hide_flag() -> void:
+	# Cue payloads often come from JSON, so `hide` can be a string. It must be
+	# read through CueEvent.is_flag() instead of bool() (which has no Variant
+	# constructor and raises a script error at runtime).
+	var stage := await _build_stage("LowerThirdCueStringHide")
+	var scratch: Node = stage[0]
+	var lower := stage[2] as LowerThird
+	lower.show_lower_third("Visible", "string flag", 0.0, 0.0)
+
+	var cue := Cue.new()
+	cue.action = Cue.ACTION_LOWER_THIRD
+	cue.data = {"hide": &"hide", "duration": 0.05}
+	var event := CueEvent.new()
+	event.cue = cue
+	event.remaining = 0.5
+	lower.on_cue(event)
+	await wait(0.12)
+
+	check(not lower.is_lower_third_visible(), "string hide flag dismisses the card")
 	await dispose(scratch)
 
 
