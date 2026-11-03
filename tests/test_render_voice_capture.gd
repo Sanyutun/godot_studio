@@ -24,6 +24,8 @@ func _run_tests() -> void:
 	_clean()
 	await _test_repeat_render_remixes()
 	_clean()
+	await _test_result_counts_only_this_pass()
+	_clean()
 	await _test_explicit_audio_wins()
 	_clean()
 	await _test_silent_without_mixer()
@@ -125,6 +127,31 @@ func _test_repeat_render_remixes() -> void:
 			"repeat render re-mixes narration: %s" % renderer.get_last_error())
 	check(FileAccess.file_exists(MIXED_WAV), "repeat render rewrote the mix")
 	check(String(settings.audio_path) == MIXED_WAV, "settings point at the new mix")
+	await _dispose(renderer)
+
+
+func _test_result_counts_only_this_pass() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	var mixer := AudioCaptureMixer.new()
+	renderer.voice_mixer = mixer
+
+	var settings := _settings(OUTPUT)
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"mixed pass succeeds: %s" % renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", -1)) == 2,
+			"mixed pass reports its two VO events")
+
+	# A follow-up pass with an authored track does no mixing, so it must not
+	# inherit the previous pass's count from the still-populated mixer.
+	_write_premixed()
+	settings.audio_path = PRE_MIXED
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"authored pass succeeds: %s" % renderer.get_last_error())
+	var reported := int(renderer.get_last_result().get("voice_event_count", -1))
+	check(reported == 0, "authored pass reports no offline events (got %d)" % reported)
+	check(mixer.get_event_count() == 0, "authored pass clears the stale mixer queue")
 	await _dispose(renderer)
 
 

@@ -70,6 +70,7 @@ var _saved_subviewport_update_mode: int = SubViewport.UPDATE_WHEN_VISIBLE
 var _viewport_resized: bool = false
 var _update_mode_overridden: bool = false
 var _generated_audio_path: String = ""
+var _mixed_event_count: int = 0
 
 
 ## Renders [param sequence_override] (or [member sequence]) using
@@ -117,6 +118,7 @@ func render(
 	settings = active_settings
 	_last_error = ""
 	_last_result = {}
+	_mixed_event_count = 0
 	_cancelled = false
 	_rendering = true
 
@@ -175,7 +177,9 @@ func render(
 	if not _prepare_mixed_audio(active_sequence, active_settings, duration):
 		return false
 
-	var mixed_event_count := voice_mixer.get_event_count() if voice_mixer != null else 0
+	# Report only what this pass mixed: the mixer may still hold a queue from an
+	# earlier render whose authored `audio_path` skipped [method _prepare_mixed_audio].
+	var mixed_event_count := _mixed_event_count
 
 	if encoder == null:
 		return _fail("No ffmpeg encoder available.")
@@ -369,6 +373,10 @@ func _prepare_mixed_audio(
 	active_sequence: Sequence, active_settings: RenderSettings, duration: float
 ) -> bool:
 	if active_settings.has_audio() or voice_mixer == null:
+		# An authored track wins, but drop any queue left from an earlier pass so
+		# [method get_event_count] never describes a take that was not mixed.
+		if voice_mixer != null:
+			voice_mixer.clear()
 		return true
 	voice_mixer.clear()
 	if voice_mixer.consume_sequence(active_sequence) <= 0:
@@ -386,6 +394,7 @@ func _prepare_mixed_audio(
 		wav_path = expected_wav_path
 	active_settings.audio_path = wav_path
 	_generated_audio_path = wav_path
+	_mixed_event_count = voice_mixer.get_event_count()
 	print("[FrameRenderer] mixed %d VO event(s) → %s" % [voice_mixer.get_event_count(), wav_path])
 	return true
 
