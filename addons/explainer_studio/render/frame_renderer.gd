@@ -44,6 +44,12 @@ signal render_failed(message: String)
 ## Encoder instance. Leave empty to create one from [member RenderSettings.ffmpeg_path].
 var encoder: FfmpegEncoder
 
+## Offline narration source for M6 VO capture. When set and
+## [member RenderSettings.audio_path] is empty, [method render] mixes every
+## `voice_over` cue through [AudioCaptureMixer] and muxes the resulting WAV
+## instead of rendering silence.
+var voice_mixer: AudioCaptureMixer
+
 ## Test seam: when valid, called after [member await_frame] with the frame index
 ## and must return an [Image]. Real renders leave it invalid and read the
 ## viewport texture after a draw. The callable is synchronous.
@@ -157,6 +163,11 @@ func render(
 
 	if _cancelled:
 		return _fail("Render cancelled.")
+
+	if not _prepare_mixed_audio(active_sequence, active_settings, duration):
+		return false
+
+	var mixed_event_count := voice_mixer.get_event_count() if voice_mixer != null else 0
 
 	if encoder == null:
 		return _fail("No ffmpeg encoder available.")
@@ -336,6 +347,34 @@ func _restore_resolution() -> void:
 func _stop_playback() -> void:
 	if director != null and director.is_playing():
 		director.stop()
+
+
+## M6 offline VO capture: when a [AudioCaptureMixer] is attached and no audio
+## file was authored, mix the sequence's `voice_over` cues into a WAV next to
+## the output and point [member RenderSettings.audio_path] at it. An explicit
+## `audio_path` always wins; without a mixer the render stays silent (M4).
+## Returns `false` (after `_fail`) only when a configured mix could not be
+## written, so callers never mux a stale or missing narration file.
+func _prepare_mixed_audio(
+	active_sequence: Sequence, active_settings: RenderSettings, duration: float
+) -> bool:
+	if active_settings.has_audio() or voice_mixer == null:
+		return true
+	var queued := voice_mixer.get_event_count()
+	voice_mixer.clear()
+	if voice_mixer.consume_sequence(active_sequence) <= 0:
+		return true
+	var wav_path := "%s_voice.wav" % active_settings.get_output_path().get_basename()
+	if not _ensure_directory(_parent_dir(wav_path)):
+		return _fail("Cannot create directory for mixed narration: %s" % wav_path)
+	var total := maxf(voice_mixer.get_total_duration(duration), duration)
+	if not voice_mixer.mix_to_wav(wav_path, total):
+		return _fail("Narration mix failed to save: %s" % wav_path)
+	active_settings.audio_path = wav_path
+	print(
+		"[FrameRenderer] mixed %d VO event(s) → %s" % [queued + voice_mixer.get_event_count() - queued, wav_path]
+	)
+	return true
 
 
 func _clear_old_frames(active_settings: RenderSettings) -> void:
