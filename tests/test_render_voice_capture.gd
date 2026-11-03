@@ -19,8 +19,11 @@ const SAMPLE_RATE := 48000
 func _run_tests() -> void:
 	_clean()
 	await _test_mixed_narration_muxes()
+	_clean()
 	await _test_explicit_audio_wins()
+	_clean()
 	await _test_silent_without_mixer()
+	_clean()
 	await _test_mix_failure_fails_render()
 	_clean()
 	finish()
@@ -60,7 +63,7 @@ func _test_mixed_narration_muxes() -> void:
 	check(silent_tail < 0.01, "live mix stays silent after the hide (%f)" % silent_tail)
 
 	var encode_args := _encode_args(captured_args)
-	var audio_index := encode_args.find("-i")
+	var audio_index := encode_args.rfind("-i")
 	check(audio_index >= 0 and String(encode_args[audio_index + 1]).ends_with("_voice.wav"),
 			"the second input is the mixed WAV: %s" % [encode_args])
 	check(encode_args.has("-af") and encode_args.has("-shortest"),
@@ -80,6 +83,7 @@ func _test_explicit_audio_wins() -> void:
 	var mixer := AudioCaptureMixer.new()
 	renderer.voice_mixer = mixer
 
+	_write_premixed()
 	var settings := _settings(OUTPUT)
 	settings.audio_path = PRE_MIXED
 	var ok := await renderer.render(_vo_sequence(1.0), settings)
@@ -88,7 +92,7 @@ func _test_explicit_audio_wins() -> void:
 			"authored audio skips the offline mix entirely")
 	check(mixer.get_event_count() == 0, "mixer queue stays empty")
 	var encode_args := _encode_args(captured_args)
-	var audio_index := encode_args.find("-i")
+	var audio_index := encode_args.rfind("-i")
 	var audio_arg := String(encode_args[audio_index + 1]) if audio_index >= 0 else ""
 	check(audio_arg.ends_with("premixed.wav"),
 			"ffmpeg muxes the authored file instead (got '%s')" % audio_arg)
@@ -105,7 +109,7 @@ func _test_silent_without_mixer() -> void:
 	check(ok, "M4 behaviour survives without a mixer: %s" % renderer.get_last_error())
 	check(not FileAccess.file_exists(MIXED_WAV), "no mix is produced without a mixer")
 	var encode_args := _encode_args(captured_args)
-	check(not String(Array(encode_args).join(" ")).contains("_voice.wav"),
+	check(not " ".join(encode_args).contains("_voice.wav"),
 			"video-only command never references the mix")
 	await _dispose(renderer)
 
@@ -191,6 +195,16 @@ func _write_output(args: PackedStringArray) -> void:
 		file.close()
 
 
+## Writes an authored narration file so [method RenderSettings.validate] sees it.
+func _write_premixed() -> void:
+	DirAccess.make_dir_recursive_absolute(
+		ProjectSettings.globalize_path(PRE_MIXED.get_base_dir())
+	)
+	var mixer := AudioCaptureMixer.new()
+	mixer.queue_voice(_make_tone(0.2, 440.0, 0.5), 0.0)
+	mixer.mix_to_wav(PRE_MIXED, 0.2, 1)
+
+
 func _settings(output: String) -> RenderSettings:
 	var settings := RenderSettings.new()
 	settings.output_path = output
@@ -233,8 +247,9 @@ func _make_tone(seconds: float, frequency: float, amplitude: float) -> AudioStre
 	return wav
 
 
-## Decodes a mono 16-bit PCM WAV written by AudioCaptureMixer into [-1, 1]
-## floats by scanning the `data` chunk — no engine audio loading involved.
+## Decodes a 16-bit PCM WAV written by AudioCaptureMixer into [-1, 1] floats by
+## scanning the `data` chunk — no engine audio loading involved. Multi-channel
+## files are folded to their left channel so callers can index by frame.
 func _load_wav_samples(path: String) -> PackedFloat32Array:
 	var output := PackedFloat32Array()
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -244,11 +259,12 @@ func _load_wav_samples(path: String) -> PackedFloat32Array:
 	file.close()
 	if bytes.size() < 12:
 		return output
-	if bytes.get_string_from_ascii(0, 4) != "RIFF" or bytes.get_string_from_ascii(8, 4) != "WAVE":
+	if bytes.slice(0, 4).get_string_from_ascii() != "RIFF" or bytes.slice(8, 12).get_string_from_ascii() != "WAVE":
 		return output
 	var offset := 12
+	var channels := 1
 	while offset + 8 <= bytes.size():
-		var chunk_id := bytes.get_string_from_ascii(offset, 4)
+		var chunk_id := bytes.slice(offset, offset + 4).get_string_from_ascii()
 		var chunk_size := int(
 				bytes[offset + 4]
 				| (bytes[offset + 5] << 8)
@@ -256,8 +272,11 @@ func _load_wav_samples(path: String) -> PackedFloat32Array:
 				| (bytes[offset + 7] << 24)
 		)
 		var payload := offset + 8
-		if chunk_id == "data":
-			for index in range(payload, mini(payload + chunk_size - 1, bytes.size()), 2):
+		if chunk_id == "fmt " and chunk_size >= 4:
+			channels = maxi(int(bytes[payload + 2] | (bytes[payload + 3] << 8)), 1)
+		elif chunk_id == "data":
+			var stride := channels * 2
+			for index in range(payload, mini(payload + chunk_size - 1, bytes.size() - 1), stride):
 				var raw := bytes[index] | (bytes[index + 1] << 8)
 				if raw >= 32768:
 					raw -= 65536

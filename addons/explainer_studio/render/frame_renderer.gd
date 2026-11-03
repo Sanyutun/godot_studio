@@ -193,6 +193,8 @@ func render(
 		"resolved_output_path": active_settings.get_resolved_output_path(),
 		"frame_count": frame_count,
 		"fps": active_settings.fps,
+		"audio_path": active_settings.audio_path,
+		"voice_event_count": mixed_event_count,
 		"command": encode_result.get("command", PackedStringArray()),
 		"ffmpeg_output": encode_result.get("output", ""),
 	}

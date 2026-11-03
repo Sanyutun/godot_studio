@@ -81,6 +81,10 @@ func _render_take(user_args: PackedStringArray) -> void:
 	renderer.name = "FrameRenderer"
 	renderer.director = director
 	renderer.capture_viewport = get_viewport()
+	# M6: unless an authored mix is passed with --audio, mix the sequence's
+	# `voice_over` cues offline into a WAV beside the MP4 and mux that instead.
+	if render_settings.audio_path.is_empty():
+		renderer.voice_mixer = AudioCaptureMixer.new()
 	add_child(renderer)
 	print(
 		"[M4] rendering '%s' at %d fps / %d frames → %s"

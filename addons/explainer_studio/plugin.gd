@@ -8,7 +8,7 @@ extends EditorPlugin
 ## by headless tests.
 
 const PLUGIN_NAME := "Explainer Studio"
-const PLUGIN_VERSION := "0.5.0"
+const PLUGIN_VERSION := "0.6.0"
 const StudioDock := preload("res://addons/explainer_studio/editor/studio_dock.gd")
 
 var _dock: Control = null

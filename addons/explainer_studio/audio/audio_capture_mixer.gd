@@ -73,13 +73,13 @@ func queue_voice(
 	return true
 
 
-## Queues a fade-out of every clip active at [param at_seconds]. A non-positive
-## [param fade_out] keeps [member DEFAULT_HIDE_FADE].
+## Queues a fade-out of every clip active at [param at_seconds]. A negative
+## [param fade_out] keeps [member DEFAULT_HIDE_FADE]; `0` cuts immediately.
 func queue_hide(at_seconds: float, fade_out: float = -1.0) -> void:
 	_events.append({
 		"kind": "hide",
 		"time": maxf(at_seconds, 0.0),
-		"fade_out": fade_out if fade_out > 0.0 else DEFAULT_HIDE_FADE,
+		"fade_out": fade_out if fade_out >= 0.0 else DEFAULT_HIDE_FADE,
 	})
 
 
@@ -101,7 +101,9 @@ func get_total_duration(min_duration: float = 0.0) -> float:
 		var start := float(event.get("time", 0.0))
 		var channels := maxi(_stream_channels(stream), 1)
 		var sample_rate := float(maxi(stream.mix_rate, 1))
-		var total_frames := float(stream.data.size()) / float(channels)
+		# `queue_voice()` only accepts 16-bit PCM, so every frame is two bytes
+		# per channel. `data.size()` is a byte count, not a frame count.
+		var total_frames := float(stream.data.size()) / float(channels * 2)
 		var clip_frames := maxf(total_frames - float(maxi(int(event.get("skip_frames", 0)), 0)), 0.0)
 		var clip_seconds := clip_frames / sample_rate
 		latest = maxf(latest, start + maxf(clip_seconds, 0.0))
@@ -138,6 +140,9 @@ func render_pcm(duration_seconds: float, channel_count: int) -> PackedFloat32Arr
 
 ## Renders the mixed timeline and writes a 16-bit PCM WAV file to
 ## [param wav_path] (`user://` paths are globalized). Returns `true` on success.
+## The destination directory must already exist — [FrameRenderer] creates it
+## before requesting a mix, and failing here keeps a typo from scattering
+## directories across the project.
 func mix_to_wav(wav_path: String, duration_seconds: float, channel_count: int = 2) -> bool:
 	_last_mix_path = wav_path
 	var pcm := render_pcm(duration_seconds, clampi(channel_count, 1, 2))
@@ -145,9 +150,8 @@ func mix_to_wav(wav_path: String, duration_seconds: float, channel_count: int = 
 	var absolute := ProjectSettings.globalize_path(wav_path) if wav_path.begins_with("user://") else wav_path
 	var directory := absolute.get_base_dir()
 	if not directory.is_empty() and not DirAccess.dir_exists_absolute(directory):
-		if DirAccess.make_dir_recursive_absolute(directory) != OK:
-			push_error("AudioCaptureMixer: cannot create directory '%s'." % directory)
-			return false
+		push_error("AudioCaptureMixer: directory does not exist '%s'." % directory)
+		return false
 	var file := FileAccess.open(absolute, FileAccess.WRITE)
 	if file == null:
 		push_error("AudioCaptureMixer: cannot open '%s' for writing (%s)." % [wav_path, error_string(FileAccess.get_open_error())])
@@ -285,7 +289,15 @@ func consume_sequence(
 			var data := cue.data
 			var is_hide := bool(data.get("hide", false)) or StringName(data.get("stop", &"")) == &"stop"
 			if is_hide:
-				queue_hide(absolute, float(data.get("duration", -1.0)))
+				# Mirror [method CueEvent.get_budget]: a missing duration spends
+				# the shot's remaining time, an explicit one is clamped to it.
+				var local := absolute - sequence.get_shot_start_time(shot_index)
+				var remaining := maxf(shot.get_safe_duration() - local, 0.0)
+				var requested := float(data.get("duration", -1.0))
+				queue_hide(
+					absolute,
+					remaining if requested < 0.0 else minf(requested, remaining)
+				)
 				continue
 			var stream := _pick_stream(data, default_stream)
 			if stream == null:
@@ -296,9 +308,11 @@ func consume_sequence(
 			var fade_in := float(data.get("fade_in",
 				track.fade_in if track != null else default_fade_in))
 			var gain := db_to_linear(volume_db)
-			var from_seconds := float(data.get("from", 0.0))
-			if track != null:
-				from_seconds += track.start_offset
+			# [VoiceOver.on_cue] lets a per-cue `from` replace the track offset
+			# rather than adding to it.
+			var from_seconds := float(data.get(
+				"from", track.start_offset if track != null else 0.0
+			))
 			var skip_frames := maxi(int(round(from_seconds * float(stream.mix_rate))), 0)
 			queue_voice(stream, absolute, gain, fade_in, skip_frames, _cue_bus(data, track))
 	return _events.size() - before
@@ -389,21 +403,28 @@ func _mix_clip(output: PackedFloat32Array, frames: int, channels: int, event: Di
 	var start_frame := int(round(float(event.get("time", 0.0)) * float(_sample_rate)))
 	var raw := stream.data
 	var skip_frames := maxi(int(event.get("skip_frames", 0)), 0)
-	var available := maxi(raw.size() / maxi(source_channels, 1) - skip_frames, 0)
-	var end_frame := min(start_frame + available, frames)
-	var total := output.size()
+	var bytes_per_frame := source_channels * 2
+	var available := maxi(raw.size() / bytes_per_frame - skip_frames, 0)
 	var source_rate := float(maxi(stream.mix_rate, 1))
 	var step := source_rate / float(_sample_rate)
+	# Convert remaining source frames to output frames so low-rate sources are
+	# not truncated and high-rate ones do not overrun.
+	var output_frames := int(ceil(float(available) / maxf(step, 0.000001)))
+	var end_frame := min(start_frame + output_frames, frames)
+	var total := output.size()
 	for frame in range(maxi(start_frame, 0), end_frame):
 		var source_frame := skip_frames + int(round(float(frame - start_frame) * step))
-		if source_frame * source_channels + 1 >= raw.size():
+		var source_offset := source_frame * bytes_per_frame
+		# Resampling can advance the source cursor faster than the output one, so
+		# check the byte offset per frame instead of trusting `end_frame` alone.
+		if source_offset + bytes_per_frame > raw.size():
 			break
 		var envelope := gain
 		if fade_in_frames > 0 and frame - start_frame < fade_in_frames:
 			envelope = gain * float(frame - start_frame + 1) / float(fade_in_frames)
 		for channel in channels:
 			var source_channel := mini(channel, source_channels - 1)
-			var sample := float(raw.decode_s16(source_frame * source_channels * 2 + source_channel * 2)) / 32768.0
+			var sample := float(raw.decode_s16(source_offset + source_channel * 2)) / 32768.0
 			var index := frame * channels + channel
 			if index < total:
 				output[index] += sample * envelope
