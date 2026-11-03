@@ -391,8 +391,8 @@ func _test_file_roundtrip() -> void:
 		# The mix lands in the `data` chunk; skip the 44-byte canonical header.
 		file.seek(44)
 		var header := file.get_buffer(12)
-		check(header.get_string_from_ascii(0, 4) == "RIFF", "file starts with RIFF")
-		check(header.get_string_from_ascii(8, 4) == "WAVE", "file is WAVE format")
+		check(header.slice(0, 4).get_string_from_ascii() == "RIFF", "file starts with RIFF")
+		check(header.slice(8, 12).get_string_from_ascii() == "WAVE", "file is WAVE format")
 		var data := file.get_buffer(int(file.get_length() - 44))
 		var samples := PackedFloat32Array()
 		for byte_index in range(0, data.size() - 1, 2):
