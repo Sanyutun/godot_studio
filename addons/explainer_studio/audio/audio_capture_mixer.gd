@@ -81,9 +81,11 @@ func get_total_duration(min_duration: float = 0.0) -> float:
 		if String(event.get("kind", "")) != "voice":
 			continue
 		var stream := event.get("stream") as AudioStreamWAV
+		if stream == null:
+			continue
 		var start := float(event.get("time", 0.0))
-		var data_length := stream.data.stream_len() if stream != null else 0
-		var clip_seconds := float(data_length) / (float(stream.mix_rate) * float(_stream_channels(stream)))
+		var channels := maxi(_stream_channels(stream), 1)
+		var clip_seconds := float(stream.data.size()) / (float(maxi(stream.mix_rate, 1)) * float(channels))
 		latest = maxf(latest, start + maxf(clip_seconds, 0.0))
 	return maxf(latest, 0.0)
 
@@ -116,32 +118,75 @@ func render_pcm(duration_seconds: float, channel_count: int) -> PackedFloat32Arr
 	return output
 
 
-## Renders the mixed timeline and writes a 16-bit PCM WAV to [param wav_path]
-## (`user://` and `res://` paths are globalized). Returns `true` on success.
+## Renders the mixed timeline and writes a 16-bit PCM WAV file to
+## [param wav_path] (`user://` paths are globalized). Returns `true` on success.
 func mix_to_wav(wav_path: String, duration_seconds: float, channel_count: int = 2) -> bool:
 	var pcm := render_pcm(duration_seconds, clampi(channel_count, 1, 2))
-	var wav := build_wav(pcm, clampi(channel_count, 1, 2))
-	var error := wav.save_wav(wav_path)
-	if error != OK:
-		push_error("AudioCaptureMixer: save_wav('%s') failed with %s." % [wav_path, error_string(error)])
+	var bytes := encode_wav_bytes(pcm, clampi(channel_count, 1, 2))
+	var absolute := ProjectSettings.globalize_path(wav_path) if wav_path.begins_with("user://") else wav_path
+	var directory := absolute.get_base_dir()
+	if not directory.is_empty() and not DirAccess.dir_exists_absolute(directory):
+		if DirAccess.make_dir_recursive_absolute(directory) != OK:
+			push_error("AudioCaptureMixer: cannot create directory '%s'." % directory)
+			return false
+	var file := FileAccess.open(absolute, FileAccess.WRITE)
+	if file == null:
+		push_error("AudioCaptureMixer: cannot open '%s' for writing (%s)." % [wav_path, error_string(FileAccess.get_open_error())])
 		return false
+	file.store_buffer(bytes)
+	file.close()
 	return true
 
 
-## Builds a 16-bit PCM [AudioStreamWAV] from interleaved [-1, 1] samples.
-## Exposed for tests and custom exporters.
-func build_wav(pcm: PackedFloat32Array, channel_count: int) -> AudioStreamWAV:
+## Builds a 44-byte-header 16-bit PCM WAV container around interleaved
+## [-1, 1] samples. Exposed for tests and custom exporters.
+static func encode_wav_bytes(pcm: PackedFloat32Array, channel_count: int, sample_rate: int = DEFAULT_SAMPLE_RATE) -> PackedByteArray:
 	var channels := clampi(channel_count, 1, 2)
-	var samples := PackedInt16Array()
-	samples.resize(pcm.size())
-	for index in pcm.size():
-		samples[index] = int16(clampf(pcm[index], -1.0, 1.0) * 32767.0)
-	var wav := AudioStreamWAV.new()
-	wav.format = AudioStreamWAV.FORMAT_16_BITS
-	wav.stereo = channels == 2
-	wav.mix_rate = _sample_rate
-	wav.data = samples
-	return wav
+	var rate := maxi(sample_rate, 1)
+	var data_size := pcm.size() * 2
+	var bytes := PackedByteArray()
+	bytes.resize(44 + data_size)
+	var offset := 0
+	offset = _put_string(bytes, offset, "RIFF")
+	offset = _put_u32le(bytes, offset, 36 + data_size)
+	offset = _put_string(bytes, offset, "WAVE")
+	offset = _put_string(bytes, offset, "fmt ")
+	offset = _put_u32le(bytes, offset, 16)
+	offset = _put_u16le(bytes, offset, 1)  # PCM
+	offset = _put_u16le(bytes, offset, channels)
+	offset = _put_u32le(bytes, offset, rate)
+	offset = _put_u32le(bytes, offset, rate * channels * 2)
+	offset = _put_u16le(bytes, offset, channels * 2)
+	offset = _put_u16le(bytes, offset, 16)
+	offset = _put_string(bytes, offset, "data")
+	offset = _put_u32le(bytes, offset, data_size)
+	for sample in pcm:
+		var value := int(round(clampf(float(sample), -1.0, 1.0) * 32767.0))
+		if value < 0:
+			value += 65536
+		offset = _put_u16le(bytes, offset, value)
+	return bytes
+
+
+static func _put_string(target: PackedByteArray, offset: int, text: String) -> int:
+	for byte in text.to_ascii_buffer():
+		target[offset] = byte
+		offset += 1
+	return offset
+
+
+static func _put_u16le(target: PackedByteArray, offset: int, value: int) -> int:
+	target[offset] = value & 0xFF
+	target[offset + 1] = (value >> 8) & 0xFF
+	return offset + 2
+
+
+static func _put_u32le(target: PackedByteArray, offset: int, value: int) -> int:
+	target[offset] = value & 0xFF
+	target[offset + 1] = (value >> 8) & 0xFF
+	target[offset + 2] = (value >> 16) & 0xFF
+	target[offset + 3] = (value >> 24) & 0xFF
+	return offset + 4
 
 
 ## Wraps [param pcm] in a loopable [AudioStreamGenerator] playback, useful for
