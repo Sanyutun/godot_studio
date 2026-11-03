@@ -26,6 +26,8 @@ func _run_tests() -> void:
 	_clean()
 	await _test_result_counts_only_this_pass()
 	_clean()
+	await _test_saved_generated_path_remixes()
+	_clean()
 	await _test_explicit_audio_wins()
 	_clean()
 	await _test_silent_without_mixer()
@@ -152,6 +154,35 @@ func _test_result_counts_only_this_pass() -> void:
 	var reported := int(renderer.get_last_result().get("voice_event_count", -1))
 	check(reported == 0, "authored pass reports no offline events (got %d)" % reported)
 	check(mixer.get_event_count() == 0, "authored pass clears the stale mixer queue")
+	await _dispose(renderer)
+
+
+func _test_saved_generated_path_remixes() -> void:
+	# A profile saved after a render keeps the generated mix path. A fresh
+	# renderer must recognise the convention as its own output and re-mix, not
+	# reject the take because the WAV was deleted in between.
+	var seed_renderer := _make_renderer()
+	seed_renderer.encoder = _fake_encoder([])
+	seed_renderer.voice_mixer = AudioCaptureMixer.new()
+	var seeded := _settings(OUTPUT)
+	check(await seed_renderer.render(_vo_sequence(1.0), seeded),
+			"seed render succeeds: %s" % seed_renderer.get_last_error())
+	await _dispose(seed_renderer)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MIXED_WAV))
+	check(not FileAccess.file_exists(MIXED_WAV), "seed mix removed")
+
+	var renderer := _make_renderer()
+	renderer.encoder = _fake_encoder([])
+	renderer.voice_mixer = AudioCaptureMixer.new()
+	var reloaded := _settings(OUTPUT)
+	reloaded.audio_path = MIXED_WAV
+	check(await renderer.render(_vo_sequence(1.0), reloaded),
+			"saved generated path is re-mixed, not validated away: %s"
+			% renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", 0)) == 2,
+			"re-mixed pass reports its VO events")
+	check(FileAccess.file_exists(MIXED_WAV), "the convention-named mix was rewritten")
+	check(String(reloaded.audio_path) == MIXED_WAV, "the settings point at the new mix")
 	await _dispose(renderer)
 
 

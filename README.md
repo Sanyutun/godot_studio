@@ -230,6 +230,10 @@ an authored track:
 godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render --out user://m1_demo.mp4
 ```
 
+The generated track follows the output name (`take.mp4` → `take_voice.wav`), and
+the renderer treats that convention as its own output: a profile saved after a
+render, or a repeat pass, re-mixes instead of trusting a deleted or stale WAV.
+
 `mix_to_wav()` writes beside the output (the directory must exist),
 `render_pcm()` returns the mixed samples for CI, and `build_wav()` wraps them in
 an in-memory `AudioStreamWAV`. Everything is pure, so the tests need no engine

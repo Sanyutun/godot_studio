@@ -92,13 +92,17 @@ func render(
 	for issue in active_sequence.validate():
 		push_warning("FrameRenderer: %s" % issue)
 	var duration := active_sequence.get_total_duration()
-	# A previous pass writes its mixed narration into `audio_path`; that is an
-	# output, not an authored track. Clear it so a repeat render re-mixes instead
-	# of trusting a stale (or deleted) WAV from the last pass.
-	if not _generated_audio_path.is_empty():
-		if active_settings.audio_path == _generated_audio_path:
+	# A previous pass writes its mixed narration into `audio_path`; a saved
+	# `.tres` profile can keep it too. With a mixer attached that path is an
+	# output, not an authored track, so clear it before validation and let this
+	# pass re-mix instead of trusting a stale (or already deleted) WAV.
+	if voice_mixer != null and not active_settings.audio_path.is_empty():
+		if (
+			active_settings.audio_path == _expected_mix_path(active_settings)
+			or active_settings.audio_path == _generated_audio_path
+		):
 			active_settings.audio_path = ""
-		_generated_audio_path = ""
+	_generated_audio_path = ""
 	var issues := active_settings.validate(duration)
 	if duration <= 0.0:
 		issues.append("Sequence has zero duration.")
@@ -381,7 +385,7 @@ func _prepare_mixed_audio(
 	voice_mixer.clear()
 	if voice_mixer.consume_sequence(active_sequence) <= 0:
 		return true
-	var expected_wav_path := "%s_voice.wav" % active_settings.get_output_path().get_basename()
+	var expected_wav_path := _expected_mix_path(active_settings)
 	if not _ensure_directory(_parent_dir(expected_wav_path)):
 		return _fail("Cannot create directory for mixed narration: %s" % expected_wav_path)
 	var total := maxf(voice_mixer.get_total_duration(duration), duration)
@@ -397,6 +401,14 @@ func _prepare_mixed_audio(
 	_mixed_event_count = voice_mixer.get_event_count()
 	print("[FrameRenderer] mixed %d VO event(s) → %s" % [voice_mixer.get_event_count(), wav_path])
 	return true
+
+
+## Where [method _prepare_mixed_audio] writes narration for [param active_settings]:
+## the output basename plus `_voice.wav` (`user://takes/a.mp4` → `user://takes/a_voice.wav`).
+## The renderer treats this path as its own output, so a profile that still names
+## it re-mixes even after the WAV was deleted.
+func _expected_mix_path(active_settings: RenderSettings) -> String:
+	return "%s_voice.wav" % active_settings.get_output_path().get_basename()
 
 
 func _clear_old_frames(active_settings: RenderSettings) -> void:

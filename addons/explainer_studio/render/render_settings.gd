@@ -70,6 +70,9 @@ var preset: String = "medium"
 ## Optional audio file to mux into the movie. Leave empty when a
 ## [FrameRenderer] has an [AudioCaptureMixer] attached: the renderer then mixes
 ## `voice_over` cues offline (M6) and fills this in with the generated WAV.
+## A path matching the generated `<output>_voice.wav` is treated as the
+## renderer's own output and re-mixed, so a saved profile never muxes a stale
+## narration file. Any other path is used as-is.
 @export var audio_path: String = ""
 
 ## Audio codec used when [member audio_path] is set.
