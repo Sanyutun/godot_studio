@@ -69,6 +69,7 @@ var _saved_subviewport_size: Vector2i = Vector2i.ZERO
 var _saved_subviewport_update_mode: int = SubViewport.UPDATE_WHEN_VISIBLE
 var _viewport_resized: bool = false
 var _update_mode_overridden: bool = false
+var _generated_audio_path: String = ""
 
 
 ## Renders [param sequence_override] (or [member sequence]) using
@@ -90,6 +91,13 @@ func render(
 	for issue in active_sequence.validate():
 		push_warning("FrameRenderer: %s" % issue)
 	var duration := active_sequence.get_total_duration()
+	# A previous pass writes its mixed narration into `audio_path`; that is an
+	# output, not an authored track. Clear it so a repeat render re-mixes instead
+	# of trusting a stale (or deleted) WAV from the last pass.
+	if not _generated_audio_path.is_empty():
+		if active_settings.audio_path == _generated_audio_path:
+			active_settings.audio_path = ""
+		_generated_audio_path = ""
 	var issues := active_settings.validate(duration)
 	if duration <= 0.0:
 		issues.append("Sequence has zero duration.")
@@ -377,6 +385,7 @@ func _prepare_mixed_audio(
 	if wav_path.is_empty():
 		wav_path = expected_wav_path
 	active_settings.audio_path = wav_path
+	_generated_audio_path = wav_path
 	print("[FrameRenderer] mixed %d VO event(s) → %s" % [voice_mixer.get_event_count(), wav_path])
 	return true
 

@@ -20,6 +20,10 @@ func _run_tests() -> void:
 	_clean()
 	await _test_mixed_narration_muxes()
 	_clean()
+	await _test_cross_shot_handoff()
+	_clean()
+	await _test_repeat_render_remixes()
+	_clean()
 	await _test_explicit_audio_wins()
 	_clean()
 	await _test_silent_without_mixer()
@@ -73,6 +77,54 @@ func _test_mixed_narration_muxes() -> void:
 	check(int(result.get("frame_count", 0)) == 30,
 			"thirty frames for a one-second take at 30 fps")
 	check(not renderer.is_rendering(), "renderer is idle afterwards")
+	await _dispose(renderer)
+
+
+func _test_cross_shot_handoff() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	renderer.voice_mixer = AudioCaptureMixer.new()
+
+	var settings := _settings(OUTPUT)
+	var ok := await renderer.render(_handoff_sequence(), settings)
+	check(ok, "render with a cross-shot hand-off succeeds: %s" % renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", 0)) == 2,
+			"result counts both voice cues")
+
+	var loaded := _load_wav_samples(MIXED_WAV)
+	check(not loaded.is_empty(), "hand-off mix decodes")
+	if not loaded.is_empty():
+		var rate := float(SAMPLE_RATE)
+		var first := _peak(loaded, int(0.55 * rate), int(0.90 * rate))
+		check(first > 0.3, "the first line plays in its shot (%f)" % first)
+		# Both cues use the same 0.4 tone in phase; layering would peak near 0.8.
+		var second := _peak(loaded, int(1.10 * rate), int(1.80 * rate))
+		check(second > 0.3 and second < 0.5,
+				"the next shot's cue replaces the outliving line (%f)" % second)
+	await _dispose(renderer)
+
+
+func _test_repeat_render_remixes() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	renderer.voice_mixer = AudioCaptureMixer.new()
+
+	var settings := _settings(OUTPUT)
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"first mixed render succeeds: %s" % renderer.get_last_error())
+	check(String(settings.audio_path) == MIXED_WAV,
+			"the renderer records its generated mix on the settings")
+
+	# The generated WAV is an output, not an authored track: deleting it must
+	# make the next render re-mix instead of failing validation on a stale path.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MIXED_WAV))
+	check(not FileAccess.file_exists(MIXED_WAV), "generated mix removed")
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"repeat render re-mixes narration: %s" % renderer.get_last_error())
+	check(FileAccess.file_exists(MIXED_WAV), "repeat render rewrote the mix")
+	check(String(settings.audio_path) == MIXED_WAV, "settings point at the new mix")
 	await _dispose(renderer)
 
 
@@ -229,6 +281,30 @@ func _vo_sequence(duration: float) -> Sequence:
 	hide.data = {"hide": true}
 	shot.cues = [voice, hide]
 	sequence.add_shot(shot)
+	return sequence
+
+
+func _handoff_sequence() -> Sequence:
+	var sequence := Sequence.new()
+	sequence.display_name = "m6-render-handoff"
+	var first := Shot.new()
+	first.kind = Shot.Kind.HOLD
+	first.duration = 1.0
+	var first_voice := Cue.new()
+	first_voice.time = 0.5
+	first_voice.action = Cue.ACTION_VOICE_OVER
+	first_voice.data = {"stream": _make_tone(1.0, 1000.0, 0.4)}
+	first.cues = [first_voice]
+	var second := Shot.new()
+	second.kind = Shot.Kind.HOLD
+	second.duration = 1.0
+	var second_voice := Cue.new()
+	second_voice.time = 0.0
+	second_voice.action = Cue.ACTION_VOICE_OVER
+	second_voice.data = {"stream": _make_tone(1.0, 1000.0, 0.4)}
+	second.cues = [second_voice]
+	sequence.add_shot(first)
+	sequence.add_shot(second)
 	return sequence
 
 
