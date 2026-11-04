@@ -1,4 +1,4 @@
-@tool
+﻿@tool
 class_name CounterRevealer
 extends Label
 ## Cue-driven counter with comma formatting
@@ -22,26 +22,15 @@ func _animate_counter(event: CueEvent) -> void:
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_LINEAR)
 	
-	# Use a method to update
-	var counter = 0.0
-	tween.tween_method(
-		func(val: float): 
-			counter = val
-			if use_comma:
-				text = _format_with_commas(int(val))
-			else:
-				text = str(int(val))
-			# Check for final_text swap at 85% progress
-			if not final_text.is_empty() and val >= to_val * 0.85 and val < to_val:
-				# Swap early
-				pass
-		, from_val, to_val, duration
-	)
+	tween.tween_method(func(val: float): 
+		if use_comma:
+			text = _format_with_commas(int(val))
+		else:
+			text = str(int(val))
+	, from_val, to_val, duration)
 	
 	tween.tween_callback(func():
 		if not final_text.is_empty():
-			# Scale pop
-			scale = Vector2(1.0, 1.0)
 			pivot_offset = size / 2
 			var pop_tween = create_tween()
 			pop_tween.set_trans(Tween.TRANS_BACK)
@@ -50,7 +39,7 @@ func _animate_counter(event: CueEvent) -> void:
 			pop_tween.tween_property(self, "scale", Vector2(1.2, 1.2), 0.2)
 			pop_tween.tween_property(self, "scale", Vector2(1.0, 1.0), 0.15)
 		counter_finished.emit()
-	).set_delay(duration * 0.85)
+	)
 
 func _format_with_commas(num: int) -> String:
 	var s = str(num)

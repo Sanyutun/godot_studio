@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://c8k4m2n6p8q1r"]
+﻿[gd_scene load_steps=16 format=3 uid="uid://c8k4m2n6p8q1r"]
 
 [ext_resource type="Script" path="res://scenes/demo/m1_demo.gd" id="1_script"]
 [ext_resource type="Script" path="res://addons/explainer_studio/camera/explainer_camera.gd" id="2_camera"]
@@ -35,7 +35,7 @@ camera = NodePath("../ExplainerCamera")
 [node name="VoiceOver" type="AudioStreamPlayer" parent="."]
 script = ExtResource("4_voice")
 
-[node name="Canvas" type="Node2D"]
+[node name="Canvas" parent="."] type="Node2D"]
 position = Vector2(3000, 1500)
 
 [node name="BodySilhouette" type="ColorRect" parent="Canvas"]
@@ -96,7 +96,7 @@ offset_top = -150.0
 offset_right = 2600.0
 offset_bottom = 150.0
 script = ExtResource("8_barchart")
-bars = Array[Dictionary]([{"label": "人体基因", "value": 20000, "color": Color(0.5, 0.5, 0.5, 1)}, {"label": "微生物基因", "value": 3000000, "color": Color(0.2, 0.6, 1, 1)}])
+bars = Array[Dictionary]([{"label": "äººä½“åŸºå› ", "value": 20000, "color": Color(0.5, 0.5, 0.5, 1)}, {"label": "å¾®ç”Ÿç‰©åŸºå› ", "value": 3000000, "color": Color(0.2, 0.6, 1, 1)}])
 
 [node name="CounterRevealer" type="Label" parent="Canvas"]
 offset_left = 0.0

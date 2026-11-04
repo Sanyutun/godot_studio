@@ -1,4 +1,4 @@
-@tool
+﻿@tool
 class_name ExplainerCamera
 extends Camera2D
 ## Cinematic 2D camera driven by [Shot] resources.
@@ -33,28 +33,17 @@ var default_zoom: float = 1.0
 @export_range(0.0, 512.0, 1.0, "suffix:px")
 var fit_padding: float = 48.0
 
-## Pixel art mode: snap camera position/zoom to pixel grid to prevent shimmer
-@export var pixel_snap: bool = true
+## Fallback look-at target used when a shot's own [member Shot.target] is empty.
+@export var default_target: NodePath
+
+var _active_tween: Tween = null
+var _active_shot: Shot = null
+var _shot_active: bool = false
+var _generation: int = 0
 
 
 func _ready() -> void:
 	anchor_mode = Camera2D.ANCHOR_MODE_DRAG_CENTER
-
-
-func _process(_delta: float) -> void:
-	if pixel_snap:
-		_snap_to_pixel_grid()
-
-
-func _snap_to_pixel_grid() -> void:
-	var snap_scale = zoom.x
-	if snap_scale <= 0.0:
-		return
-	# Round position to nearest pixel
-	var pixel_pos = (global_position * snap_scale).round() / snap_scale
-	global_position = pixel_pos
-	# Snap zoom to reasonable grid values
-	zoom = zoom.round() if zoom.x > 0.5 else zoom
 
 
 ## Starts [param shot] and returns its tween so callers can `await` it directly.
