@@ -9,7 +9,7 @@ extends MarginContainer
 ## actions. Nothing here animates a camera directly.
 
 const PreviewScrubber := preload("res://addons/explainer_studio/editor/preview_scrubber.gd")
-const VERSION := "0.5.0"
+const VERSION := "0.6.0"
 
 ## Must stay in [enum Shot.Kind] order: the OptionButton index is written
 ## straight into `Shot.kind`.

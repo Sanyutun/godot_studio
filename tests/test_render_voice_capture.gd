@@ -19,8 +19,19 @@ const SAMPLE_RATE := 48000
 func _run_tests() -> void:
 	_clean()
 	await _test_mixed_narration_muxes()
+	_clean()
+	await _test_cross_shot_handoff()
+	_clean()
+	await _test_repeat_render_remixes()
+	_clean()
+	await _test_result_counts_only_this_pass()
+	_clean()
+	await _test_saved_generated_path_remixes()
+	_clean()
 	await _test_explicit_audio_wins()
+	_clean()
 	await _test_silent_without_mixer()
+	_clean()
 	await _test_mix_failure_fails_render()
 	_clean()
 	finish()
@@ -60,7 +71,7 @@ func _test_mixed_narration_muxes() -> void:
 	check(silent_tail < 0.01, "live mix stays silent after the hide (%f)" % silent_tail)
 
 	var encode_args := _encode_args(captured_args)
-	var audio_index := encode_args.find("-i")
+	var audio_index := encode_args.rfind("-i")
 	check(audio_index >= 0 and String(encode_args[audio_index + 1]).ends_with("_voice.wav"),
 			"the second input is the mixed WAV: %s" % [encode_args])
 	check(encode_args.has("-af") and encode_args.has("-shortest"),
@@ -73,6 +84,108 @@ func _test_mixed_narration_muxes() -> void:
 	await _dispose(renderer)
 
 
+func _test_cross_shot_handoff() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	renderer.voice_mixer = AudioCaptureMixer.new()
+
+	var settings := _settings(OUTPUT)
+	var ok := await renderer.render(_handoff_sequence(), settings)
+	check(ok, "render with a cross-shot hand-off succeeds: %s" % renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", 0)) == 2,
+			"result counts both voice cues")
+
+	var loaded := _load_wav_samples(MIXED_WAV)
+	check(not loaded.is_empty(), "hand-off mix decodes")
+	if not loaded.is_empty():
+		var rate := float(SAMPLE_RATE)
+		var first := _peak(loaded, int(0.55 * rate), int(0.90 * rate))
+		check(first > 0.3, "the first line plays in its shot (%f)" % first)
+		# Both cues use the same 0.4 tone in phase; layering would peak near 0.8.
+		var second := _peak(loaded, int(1.10 * rate), int(1.80 * rate))
+		check(second > 0.3 and second < 0.5,
+				"the next shot's cue replaces the outliving line (%f)" % second)
+	await _dispose(renderer)
+
+
+func _test_repeat_render_remixes() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	renderer.voice_mixer = AudioCaptureMixer.new()
+
+	var settings := _settings(OUTPUT)
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"first mixed render succeeds: %s" % renderer.get_last_error())
+	check(String(settings.audio_path) == MIXED_WAV,
+			"the renderer records its generated mix on the settings")
+
+	# The generated WAV is an output, not an authored track: deleting it must
+	# make the next render re-mix instead of failing validation on a stale path.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MIXED_WAV))
+	check(not FileAccess.file_exists(MIXED_WAV), "generated mix removed")
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"repeat render re-mixes narration: %s" % renderer.get_last_error())
+	check(FileAccess.file_exists(MIXED_WAV), "repeat render rewrote the mix")
+	check(String(settings.audio_path) == MIXED_WAV, "settings point at the new mix")
+	await _dispose(renderer)
+
+
+func _test_result_counts_only_this_pass() -> void:
+	var renderer := _make_renderer()
+	var captured_args: Array[PackedStringArray] = []
+	renderer.encoder = _fake_encoder(captured_args)
+	var mixer := AudioCaptureMixer.new()
+	renderer.voice_mixer = mixer
+
+	var settings := _settings(OUTPUT)
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"mixed pass succeeds: %s" % renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", -1)) == 2,
+			"mixed pass reports its two VO events")
+
+	# A follow-up pass with an authored track does no mixing, so it must not
+	# inherit the previous pass's count from the still-populated mixer.
+	_write_premixed()
+	settings.audio_path = PRE_MIXED
+	check(await renderer.render(_vo_sequence(1.0), settings),
+			"authored pass succeeds: %s" % renderer.get_last_error())
+	var reported := int(renderer.get_last_result().get("voice_event_count", -1))
+	check(reported == 0, "authored pass reports no offline events (got %d)" % reported)
+	check(mixer.get_event_count() == 0, "authored pass clears the stale mixer queue")
+	await _dispose(renderer)
+
+
+func _test_saved_generated_path_remixes() -> void:
+	# A profile saved after a render keeps the generated mix path. A fresh
+	# renderer must recognise the convention as its own output and re-mix, not
+	# reject the take because the WAV was deleted in between.
+	var seed_renderer := _make_renderer()
+	seed_renderer.encoder = _fake_encoder([])
+	seed_renderer.voice_mixer = AudioCaptureMixer.new()
+	var seeded := _settings(OUTPUT)
+	check(await seed_renderer.render(_vo_sequence(1.0), seeded),
+			"seed render succeeds: %s" % seed_renderer.get_last_error())
+	await _dispose(seed_renderer)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MIXED_WAV))
+	check(not FileAccess.file_exists(MIXED_WAV), "seed mix removed")
+
+	var renderer := _make_renderer()
+	renderer.encoder = _fake_encoder([])
+	renderer.voice_mixer = AudioCaptureMixer.new()
+	var reloaded := _settings(OUTPUT)
+	reloaded.audio_path = MIXED_WAV
+	check(await renderer.render(_vo_sequence(1.0), reloaded),
+			"saved generated path is re-mixed, not validated away: %s"
+			% renderer.get_last_error())
+	check(int(renderer.get_last_result().get("voice_event_count", 0)) == 2,
+			"re-mixed pass reports its VO events")
+	check(FileAccess.file_exists(MIXED_WAV), "the convention-named mix was rewritten")
+	check(String(reloaded.audio_path) == MIXED_WAV, "the settings point at the new mix")
+	await _dispose(renderer)
+
+
 func _test_explicit_audio_wins() -> void:
 	var renderer := _make_renderer()
 	var captured_args: Array[PackedStringArray] = []
@@ -80,6 +193,7 @@ func _test_explicit_audio_wins() -> void:
 	var mixer := AudioCaptureMixer.new()
 	renderer.voice_mixer = mixer
 
+	_write_premixed()
 	var settings := _settings(OUTPUT)
 	settings.audio_path = PRE_MIXED
 	var ok := await renderer.render(_vo_sequence(1.0), settings)
@@ -88,7 +202,7 @@ func _test_explicit_audio_wins() -> void:
 			"authored audio skips the offline mix entirely")
 	check(mixer.get_event_count() == 0, "mixer queue stays empty")
 	var encode_args := _encode_args(captured_args)
-	var audio_index := encode_args.find("-i")
+	var audio_index := encode_args.rfind("-i")
 	var audio_arg := String(encode_args[audio_index + 1]) if audio_index >= 0 else ""
 	check(audio_arg.ends_with("premixed.wav"),
 			"ffmpeg muxes the authored file instead (got '%s')" % audio_arg)
@@ -105,7 +219,7 @@ func _test_silent_without_mixer() -> void:
 	check(ok, "M4 behaviour survives without a mixer: %s" % renderer.get_last_error())
 	check(not FileAccess.file_exists(MIXED_WAV), "no mix is produced without a mixer")
 	var encode_args := _encode_args(captured_args)
-	check(not String(Array(encode_args).join(" ")).contains("_voice.wav"),
+	check(not " ".join(encode_args).contains("_voice.wav"),
 			"video-only command never references the mix")
 	await _dispose(renderer)
 
@@ -191,6 +305,16 @@ func _write_output(args: PackedStringArray) -> void:
 		file.close()
 
 
+## Writes an authored narration file so [method RenderSettings.validate] sees it.
+func _write_premixed() -> void:
+	DirAccess.make_dir_recursive_absolute(
+		ProjectSettings.globalize_path(PRE_MIXED.get_base_dir())
+	)
+	var mixer := AudioCaptureMixer.new()
+	mixer.queue_voice(_make_tone(0.2, 440.0, 0.5), 0.0)
+	mixer.mix_to_wav(PRE_MIXED, 0.2, 1)
+
+
 func _settings(output: String) -> RenderSettings:
 	var settings := RenderSettings.new()
 	settings.output_path = output
@@ -218,6 +342,30 @@ func _vo_sequence(duration: float) -> Sequence:
 	return sequence
 
 
+func _handoff_sequence() -> Sequence:
+	var sequence := Sequence.new()
+	sequence.display_name = "m6-render-handoff"
+	var first := Shot.new()
+	first.kind = Shot.Kind.HOLD
+	first.duration = 1.0
+	var first_voice := Cue.new()
+	first_voice.time = 0.5
+	first_voice.action = Cue.ACTION_VOICE_OVER
+	first_voice.data = {"stream": _make_tone(1.0, 1000.0, 0.4)}
+	first.cues = [first_voice]
+	var second := Shot.new()
+	second.kind = Shot.Kind.HOLD
+	second.duration = 1.0
+	var second_voice := Cue.new()
+	second_voice.time = 0.0
+	second_voice.action = Cue.ACTION_VOICE_OVER
+	second_voice.data = {"stream": _make_tone(1.0, 1000.0, 0.4)}
+	second.cues = [second_voice]
+	sequence.add_shot(first)
+	sequence.add_shot(second)
+	return sequence
+
+
 func _make_tone(seconds: float, frequency: float, amplitude: float) -> AudioStreamWAV:
 	var wav := AudioStreamWAV.new()
 	wav.format = AudioStreamWAV.FORMAT_16_BITS
@@ -233,8 +381,9 @@ func _make_tone(seconds: float, frequency: float, amplitude: float) -> AudioStre
 	return wav
 
 
-## Decodes a mono 16-bit PCM WAV written by AudioCaptureMixer into [-1, 1]
-## floats by scanning the `data` chunk — no engine audio loading involved.
+## Decodes a 16-bit PCM WAV written by AudioCaptureMixer into [-1, 1] floats by
+## scanning the `data` chunk — no engine audio loading involved. Multi-channel
+## files are folded to their left channel so callers can index by frame.
 func _load_wav_samples(path: String) -> PackedFloat32Array:
 	var output := PackedFloat32Array()
 	var file := FileAccess.open(path, FileAccess.READ)
@@ -244,11 +393,12 @@ func _load_wav_samples(path: String) -> PackedFloat32Array:
 	file.close()
 	if bytes.size() < 12:
 		return output
-	if bytes.get_string_from_ascii(0, 4) != "RIFF" or bytes.get_string_from_ascii(8, 4) != "WAVE":
+	if bytes.slice(0, 4).get_string_from_ascii() != "RIFF" or bytes.slice(8, 12).get_string_from_ascii() != "WAVE":
 		return output
 	var offset := 12
+	var channels := 1
 	while offset + 8 <= bytes.size():
-		var chunk_id := bytes.get_string_from_ascii(offset, 4)
+		var chunk_id := bytes.slice(offset, offset + 4).get_string_from_ascii()
 		var chunk_size := int(
 				bytes[offset + 4]
 				| (bytes[offset + 5] << 8)
@@ -256,8 +406,11 @@ func _load_wav_samples(path: String) -> PackedFloat32Array:
 				| (bytes[offset + 7] << 24)
 		)
 		var payload := offset + 8
-		if chunk_id == "data":
-			for index in range(payload, mini(payload + chunk_size - 1, bytes.size()), 2):
+		if chunk_id == "fmt " and chunk_size >= 4:
+			channels = maxi(int(bytes[payload + 2] | (bytes[payload + 3] << 8)), 1)
+		elif chunk_id == "data":
+			var stride := channels * 2
+			for index in range(payload, mini(payload + chunk_size - 1, bytes.size() - 1), stride):
 				var raw := bytes[index] | (bytes[index + 1] << 8)
 				if raw >= 32768:
 					raw -= 65536

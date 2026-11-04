@@ -69,6 +69,8 @@ var _saved_subviewport_size: Vector2i = Vector2i.ZERO
 var _saved_subviewport_update_mode: int = SubViewport.UPDATE_WHEN_VISIBLE
 var _viewport_resized: bool = false
 var _update_mode_overridden: bool = false
+var _generated_audio_path: String = ""
+var _mixed_event_count: int = 0
 
 
 ## Renders [param sequence_override] (or [member sequence]) using
@@ -90,6 +92,17 @@ func render(
 	for issue in active_sequence.validate():
 		push_warning("FrameRenderer: %s" % issue)
 	var duration := active_sequence.get_total_duration()
+	# A previous pass writes its mixed narration into `audio_path`; a saved
+	# `.tres` profile can keep it too. With a mixer attached that path is an
+	# output, not an authored track, so clear it before validation and let this
+	# pass re-mix instead of trusting a stale (or already deleted) WAV.
+	if voice_mixer != null and not active_settings.audio_path.is_empty():
+		if (
+			active_settings.audio_path == _expected_mix_path(active_settings)
+			or active_settings.audio_path == _generated_audio_path
+		):
+			active_settings.audio_path = ""
+	_generated_audio_path = ""
 	var issues := active_settings.validate(duration)
 	if duration <= 0.0:
 		issues.append("Sequence has zero duration.")
@@ -109,6 +122,7 @@ func render(
 	settings = active_settings
 	_last_error = ""
 	_last_result = {}
+	_mixed_event_count = 0
 	_cancelled = false
 	_rendering = true
 
@@ -167,7 +181,9 @@ func render(
 	if not _prepare_mixed_audio(active_sequence, active_settings, duration):
 		return false
 
-	var mixed_event_count := voice_mixer.get_event_count() if voice_mixer != null else 0
+	# Report only what this pass mixed: the mixer may still hold a queue from an
+	# earlier render whose authored `audio_path` skipped [method _prepare_mixed_audio].
+	var mixed_event_count := _mixed_event_count
 
 	if encoder == null:
 		return _fail("No ffmpeg encoder available.")
@@ -193,6 +209,8 @@ func render(
 		"resolved_output_path": active_settings.get_resolved_output_path(),
 		"frame_count": frame_count,
 		"fps": active_settings.fps,
+		"audio_path": active_settings.audio_path,
+		"voice_event_count": mixed_event_count,
 		"command": encode_result.get("command", PackedStringArray()),
 		"ffmpeg_output": encode_result.get("output", ""),
 	}
@@ -228,6 +246,9 @@ func _capture_frame_image(index: int) -> Image:
 	if not capture_frame.is_valid() and _get_capture_viewport() == null:
 		return null
 	await _await_frame()
+	# Ensure deterministic rendering in headless mode
+	if RenderingServer.has_method("force_draw"):
+		RenderingServer.force_draw()
 	return _read_frame(index)
 
 
@@ -236,6 +257,8 @@ func _await_frame() -> void:
 		await await_frame.call()
 		return
 	await RenderingServer.frame_post_draw
+	# Extra frame wait for deterministic capture
+	await get_tree().process_frame
 
 
 func _read_frame(index: int) -> Image:
@@ -359,11 +382,15 @@ func _prepare_mixed_audio(
 	active_sequence: Sequence, active_settings: RenderSettings, duration: float
 ) -> bool:
 	if active_settings.has_audio() or voice_mixer == null:
+		# An authored track wins, but drop any queue left from an earlier pass so
+		# [method get_event_count] never describes a take that was not mixed.
+		if voice_mixer != null:
+			voice_mixer.clear()
 		return true
 	voice_mixer.clear()
 	if voice_mixer.consume_sequence(active_sequence) <= 0:
 		return true
-	var expected_wav_path := "%s_voice.wav" % active_settings.get_output_path().get_basename()
+	var expected_wav_path := _expected_mix_path(active_settings)
 	if not _ensure_directory(_parent_dir(expected_wav_path)):
 		return _fail("Cannot create directory for mixed narration: %s" % expected_wav_path)
 	var total := maxf(voice_mixer.get_total_duration(duration), duration)
@@ -375,8 +402,18 @@ func _prepare_mixed_audio(
 	if wav_path.is_empty():
 		wav_path = expected_wav_path
 	active_settings.audio_path = wav_path
+	_generated_audio_path = wav_path
+	_mixed_event_count = voice_mixer.get_event_count()
 	print("[FrameRenderer] mixed %d VO event(s) → %s" % [voice_mixer.get_event_count(), wav_path])
 	return true
+
+
+## Where [method _prepare_mixed_audio] writes narration for [param active_settings]:
+## the output basename plus `_voice.wav` (`user://takes/a.mp4` → `user://takes/a_voice.wav`).
+## The renderer treats this path as its own output, so a profile that still names
+## it re-mixes even after the WAV was deleted.
+func _expected_mix_path(active_settings: RenderSettings) -> String:
+	return "%s_voice.wav" % active_settings.get_output_path().get_basename()
 
 
 func _clear_old_frames(active_settings: RenderSettings) -> void:

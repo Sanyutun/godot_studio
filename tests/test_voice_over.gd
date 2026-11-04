@@ -155,6 +155,18 @@ func _check_cue_hide_fades_out() -> void:
 	check(not voice.is_voice_playing(), "hide cue stops the voice-over")
 	check(stopped[0] == 1, "hide cue emits voice_stopped once")
 
+	# `stop` is the JSON-friendly alias; a string value must not crash bool().
+	voice.play_voice(stream, 0.0, 0.0, 0.0)
+	var stop_cue := Cue.new()
+	stop_cue.action = Cue.ACTION_VOICE_OVER
+	stop_cue.data = {"stop": &"stop", "duration": 0.0}
+	var stop_event := CueEvent.new()
+	stop_event.cue = stop_cue
+	stop_event.remaining = 0.5
+	voice.on_cue(stop_event)
+	check(not voice.is_voice_playing(), "string stop flag stops the voice-over")
+	check(stopped[0] == 2, "string stop emits voice_stopped once")
+
 	await dispose(scratch)
 
 

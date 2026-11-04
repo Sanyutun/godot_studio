@@ -1,4 +1,4 @@
-@tool
+﻿@tool
 class_name ExplainerCamera
 extends Camera2D
 ## Cinematic 2D camera driven by [Shot] resources.

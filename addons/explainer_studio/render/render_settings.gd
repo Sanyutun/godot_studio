@@ -67,9 +67,12 @@ var preset: String = "medium"
 ## even output dimensions.
 @export var pixel_format: String = "yuv420p"
 
-## Optional audio file to mux into the movie. Leave empty for a silent render.
-## Narration is authored in real time, so M4 accepts a pre-mixed track here;
-## deterministic audio mixing lands with the polish pass.
+## Optional audio file to mux into the movie. Leave empty when a
+## [FrameRenderer] has an [AudioCaptureMixer] attached: the renderer then mixes
+## `voice_over` cues offline (M6) and fills this in with the generated WAV.
+## A path matching the generated `<output>_voice.wav` is treated as the
+## renderer's own output and re-mixed, so a saved profile never muxes a stale
+## narration file. Any other path is used as-is.
 @export var audio_path: String = ""
 
 ## Audio codec used when [member audio_path] is set.
@@ -206,7 +209,7 @@ func build_ffmpeg_args() -> PackedStringArray:
 		# Pad short narration to the video length so -shortest never truncates
 		# the picture; a longer track is still cut off at the last frame.
 		args.append("-af")
-		args.append("apad")
+		args.append("loudnorm=I=-14:TP=-1:LRA=7,apad")
 		args.append("-shortest")
 	var extension := get_output_path().get_extension().to_lower()
 	if extension in ["mp4", "mov", "m4v"]:

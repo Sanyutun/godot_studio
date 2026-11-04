@@ -196,7 +196,7 @@ func hide_lower_third(
 func on_cue(event: CueEvent) -> void:
 	if event == null or event.cue == null:
 		return
-	if bool(event.get_data("hide", false)):
+	if CueEvent.is_flag(event.get_data("hide", false)):
 		hide_lower_third(event.get_budget(float(event.get_data("duration", -1.0))))
 		return
 	var title := String(event.get_data("title", ""))

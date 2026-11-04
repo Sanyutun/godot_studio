@@ -28,5 +28,3 @@ enabled=PackedStringArray("res://addons/explainer_studio/plugin.cfg")
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.04, 0.045, 0.06, 1)

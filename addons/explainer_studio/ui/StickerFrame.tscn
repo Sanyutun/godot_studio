@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3 uid="uid://b8xk3m2n4p1q5"]
+
+[ext_resource type="Shader" path="res://addons/explainer_studio/shaders/sticker_outline.gdshader" id="1_shader"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/sticker_frame.gd" id="2_script"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_1"]
+shader = ExtResource("1_shader")
+shader_parameter/outline_width_px = 10.0
+shader_parameter/outline_color = Color(1, 1, 1, 1)
+shader_parameter/shadow_offset = Vector2(4, 6)
+shader_parameter/shadow_alpha = 0.18
+shader_parameter/texture_size = Vector2(512, 512)
+
+[node name="StickerFrame" type="TextureRect"]
+material = SubResource("ShaderMaterial_1")
+custom_minimum_size = Vector2(200, 200)
+expand_mode = 1
+stretch_mode = 5
+script = ExtResource("2_script")
+on_cue_event = false

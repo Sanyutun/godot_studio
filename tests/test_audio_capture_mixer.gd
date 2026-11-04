@@ -13,7 +13,10 @@ func _run_tests() -> void:
 	_test_queue_validation()
 	_test_event_counting_and_duration()
 	_test_pcm_mixing()
+	_test_voice_replacement()
+	_test_resampling()
 	_test_hide_fade()
+	_test_equal_time_order()
 	_test_db_gain()
 	_test_sequence_resolution()
 	_test_marker_resolution()
@@ -88,21 +91,18 @@ func _test_wav_container() -> void:
 	check(not wav.stereo, "mono build_wav leaves stereo off")
 	check(wav.mix_rate == AudioCaptureMixer.DEFAULT_SAMPLE_RATE, "default rate is 48 kHz")
 	check(wav.data.size() == pcm.size() * 2, "two bytes per float sample")
-	check_approx(float(wav.decode_s16(0)) / 32767.0, 0.5, 0.001, "0.5 maps near 16383 counts")
-	check(wav.decode_s16(4) == 32767, "+1.0 clamps to full-scale positive")
-	check(wav.decode_s16(6) == -32767 or wav.decode_s16(6) == -32768, "-1.0 maps to full-scale negative")
+	check_approx(float(wav.data.decode_s16(0)) / 32767.0, 0.5, 0.001, "0.5 maps near 16383 counts")
+	check(wav.data.decode_s16(4) == 32767, "+1.0 clamps to full-scale positive")
+	check(wav.data.decode_s16(6) == -32767 or wav.data.decode_s16(6) == -32768, "-1.0 maps to full-scale negative")
 
 	var stereo := mixer.build_wav(PackedFloat32Array([0.1, 0.2]), 2)
 	check(stereo.stereo, "channel_count 2 flags the stream stereo")
 
 	# Stereo round trip keeps each channel's own level.
-	var mixed := mixer.render_pcm(0.01, 2)
-	mixed[0] = 0.25
-	mixed[1] = -0.5
-	var stereo_wav := mixer.build_wav(mixed, 2)
+	var stereo_wav := mixer.build_wav(PackedFloat32Array([0.25, -0.5]), 2)
 	check(stereo_wav.data.size() == 4, "stereo build keeps interleaved length")
-	check_approx(float(stereo_wav.decode_s16(0)) / 32767.0, 0.25, 0.001, "left channel survives build")
-	check_approx(float(stereo_wav.decode_s16(2)) / 32767.0, -0.5, 0.001, "right channel survives build")
+	check_approx(float(stereo_wav.data.decode_s16(0)) / 32767.0, 0.25, 0.001, "left channel survives build")
+	check_approx(float(stereo_wav.data.decode_s16(2)) / 32767.0, -0.5, 0.001, "right channel survives build")
 
 
 func _test_queue_validation() -> void:
@@ -153,15 +153,22 @@ func _test_pcm_mixing() -> void:
 	var tail_peak := _peak(pcm, int(0.17 * float(rate)), pcm.size())
 	check(tail_peak < 0.01, "audio after the clip end is silent (%f)" % tail_peak)
 
-	# Two overlapping clips sum, then clamp into [-1, 1].
-	var second := _make_tone(0.1, 440.0, 0.9)
-	mixer.queue_voice(second, 0.05)
-	var summed := mixer.render_pcm(0.2, 1)
+	# Two half-scale overlapping clips sum without hitting the clamp, so the RMS
+	# growth is the uncorrelated quadrature ratio (~1.41), not a clipping artefact.
+	var additive := AudioCaptureMixer.new()
+	additive.queue_voice(_make_tone(0.1, 1000.0, 0.5), 0.05)
+	var single_pcm := additive.render_pcm(0.2, 1)
+	additive.queue_voice(_make_tone(0.1, 440.0, 0.5), 0.05)
+	var summed := additive.render_pcm(0.2, 1)
 	var overlap_rms := _rms(summed, int(0.07 * float(rate)), int(0.10 * float(rate)))
-	var single_rms := _rms(pcm, int(0.07 * float(rate)), int(0.10 * float(rate)))
-	check(overlap_rms > single_rms * 1.5, "overlapping clips mix additively (%f vs %f)" % [overlap_rms, single_rms])
+	var single_rms := _rms(single_pcm, int(0.07 * float(rate)), int(0.10 * float(rate)))
+	check(overlap_rms > single_rms * 1.3, "overlapping clips mix additively (%f vs %f)" % [overlap_rms, single_rms])
+
+	# Full-scale clips still clamp at the edges instead of wrapping.
+	mixer.queue_voice(_make_tone(0.1, 440.0, 0.9), 0.05)
+	var loud_sum := mixer.render_pcm(0.2, 1)
 	var clipped := true
-	for value in summed:
+	for value in loud_sum:
 		if value > 1.0 or value < -1.0:
 			clipped = false
 			break
@@ -188,6 +195,65 @@ func _test_pcm_mixing() -> void:
 
 	check(mixer.render_pcm(0.0, 1).is_empty(), "zero-length render returns nothing")
 	check(mixer.render_pcm(-1.0, 1).is_empty(), "negative lengths clamp to empty")
+
+
+func _test_voice_replacement() -> void:
+	# VoiceOver owns one player, so a cue that starts while the previous line is
+	# still running cuts it rather than layering the two performances.
+	var sequence := Sequence.new()
+	sequence.add_shot(_hold_shot(2.0))
+	sequence.shots[0].cues.append(_voice_cue(0.0, {"stream": _make_tone(1.0, 1000.0, 0.4)}))
+	sequence.shots[0].cues.append(_voice_cue(0.5, {"stream": _make_tone(1.0, 1000.0, 0.4)}))
+
+	var mixer := AudioCaptureMixer.new()
+	check(mixer.consume_sequence(sequence) == 2, "overlapping VO cues both queue")
+	var pcm := mixer.render_pcm(2.0, 1)
+	var rate := mixer.get_sample_rate()
+	var before := _peak(pcm, int(0.20 * float(rate)), int(0.45 * float(rate)))
+	check(before > 0.3, "the first line plays until the next cue (%f)" % before)
+	# Same tone and phase, so layering would peak at ~0.8 while a replacement
+	# stays at the single clip's 0.4.
+	var after := _peak(pcm, int(0.60 * float(rate)), int(1.40 * float(rate)))
+	check(after > 0.3 and after < 0.5,
+			"a new cue replaces the running line (%f)" % after)
+
+	# Direct queue_voice() calls keep their documented layering behaviour.
+	var layered := AudioCaptureMixer.new()
+	layered.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.0)
+	layered.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.5)
+	var layered_pcm := layered.render_pcm(2.0, 1)
+	var layered_peak := _peak(layered_pcm, int(0.60 * float(rate)), int(0.95 * float(rate)))
+	check(layered_peak > 0.6, "direct queue_voice calls still layer (%f)" % layered_peak)
+
+	# replace_active is the explicit opt-in for that runtime behaviour.
+	var explicit := AudioCaptureMixer.new()
+	explicit.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.0)
+	explicit.queue_voice(_make_tone(1.0, 1000.0, 0.4), 0.5, 1.0, 0.0, 0, &"", true)
+	var explicit_pcm := explicit.render_pcm(2.0, 1)
+	var explicit_peak := _peak(explicit_pcm, int(0.60 * float(rate)), int(0.95 * float(rate)))
+	check(explicit_peak < 0.5, "replace_active cuts the earlier clip (%f)" % explicit_peak)
+
+
+func _test_resampling() -> void:
+	# Sources can run at any rate (the demo generates 44.1 kHz blips); the
+	# mixer resamples them to its 48 kHz output without truncating the tail.
+	var low := AudioCaptureMixer.new()
+	low.queue_voice(_make_tone(0.2, 1000.0, 0.5, 22050), 0.0)
+	var low_pcm := low.render_pcm(0.2, 1)
+	check(low_pcm.size() == int(0.2 * float(low.get_sample_rate())),
+			"low-rate source fills the output window")
+	check(_peak(low_pcm, int(0.18 * 48000.0), low_pcm.size()) > 0.3,
+			"low-rate source is resampled through to its end")
+	check_approx(low.get_total_duration(), 0.2, 0.001,
+			"duration follows the source clock")
+
+	var high := AudioCaptureMixer.new()
+	high.queue_voice(_make_tone(0.2, 1000.0, 0.5, 96000), 0.0)
+	var high_pcm := high.render_pcm(0.2, 1)
+	check(_peak(high_pcm, int(0.18 * 48000.0), high_pcm.size()) > 0.3,
+			"high-rate source is decimated cleanly")
+	check_approx(high.get_total_duration(), 0.2, 0.001,
+			"duration follows the source clock")
 
 
 func _test_hide_fade() -> void:
@@ -220,6 +286,26 @@ func _test_hide_fade() -> void:
 	var untouched := late_hide.render_pcm(0.1, 1)
 	var kept := _rms(untouched, int(0.02 * float(rate)), int(0.09 * float(rate)))
 	check(kept > 0.1, "hide beyond the render window changes nothing (%f)" % kept)
+
+
+func _test_equal_time_order() -> void:
+	var rate := 48000
+	# Equal-time events keep authored order, like the Director's stable sort: a
+	# hide queued first has nothing to silence, so the clip after it is audible.
+	var earlier_hide := AudioCaptureMixer.new()
+	earlier_hide.queue_hide(1.0, 0.0)
+	earlier_hide.queue_voice(_make_tone(1.0, 1000.0, 0.5), 1.0)
+	var earlier_pcm := earlier_hide.render_pcm(2.0, 1)
+	check(_peak(earlier_pcm, int(1.05 * float(rate)), int(1.40 * float(rate))) > 0.3,
+			"a hide queued before a same-time clip leaves it audible")
+
+	# Queued after, the hide wins and the brand-new clip is cut immediately.
+	var later_hide := AudioCaptureMixer.new()
+	later_hide.queue_voice(_make_tone(1.0, 1000.0, 0.5), 1.0)
+	later_hide.queue_hide(1.0, 0.0)
+	var later_pcm := later_hide.render_pcm(2.0, 1)
+	check(_peak(later_pcm, int(1.05 * float(rate)), int(1.40 * float(rate))) < 0.01,
+			"a hide queued after a same-time clip silences it")
 
 
 func _test_db_gain() -> void:
@@ -270,18 +356,18 @@ func _test_marker_resolution() -> void:
 	sequence.add_marker(&"vo_hook", 1.8)
 	var cue := _voice_cue(0.0, {"stream": _make_tone(0.1, 1000.0, 0.8)})
 	cue.marker = &"vo_hook"
-	sequence.shots[1].cues.append(cue)
+	sequence.shots[0].cues.append(cue)
 
 	var mixer := AudioCaptureMixer.new()
 	check(mixer.consume_sequence(sequence) == 1, "marker cue queued once")
-	var absolute := AudioCaptureMixer.resolve_voice_cue_time(sequence, cue, 1)
+	var absolute := AudioCaptureMixer.resolve_voice_cue_time(sequence, cue, 0)
 	check_approx(absolute, 1.8, 0.001, "marker resolves to absolute sequence time")
 
 	# Marker outside the shot clamps to the shot end, exactly like the Director.
 	var far := _voice_cue(0.0, {"stream": _make_tone(0.1, 1000.0, 0.8)})
 	far.marker = &"vo_hook"
-	sequence.shots[0].cues.append(far)
-	var clamped := AudioCaptureMixer.resolve_voice_cue_time(sequence, far, 0)
+	sequence.shots[1].cues.append(far)
+	var clamped := AudioCaptureMixer.resolve_voice_cue_time(sequence, far, 1)
 	check_approx(clamped, 2.0, 0.001, "marker beyond the shot clamps to its end")
 
 	# Unknown markers fall back to cue.time.
@@ -293,31 +379,34 @@ func _test_marker_resolution() -> void:
 
 func _test_track_defaults_precedence() -> void:
 	var track := VoiceTrack.new()
-	track.stream = _make_tone(0.2, 440.0, 0.9)
+	track.stream = _make_tone(0.6, 440.0, 0.9)
 	track.volume_db = -6.0206
 	track.fade_in = 0.05
 	track.start_offset = 0.25
-	var cue_stream := _make_tone(0.2, 1000.0, 0.9)
+	var cue_stream := _make_tone(0.5, 1000.0, 0.9)
 
 	var sequence := Sequence.new()
 	sequence.add_shot(_hold_shot(2.0))
 	sequence.shots[0].cues.append(_voice_cue(0.0, {"track": track}))
-	sequence.shots[0].cues.append(_voice_cue(1.0, {"stream": cue_stream, "track": track}))
-	sequence.shots[0].cues.append(_voice_cue(1.5, {"stream": cue_stream, "volume_db": 0.0, "from": 0.1}))
+	sequence.shots[0].cues.append(_voice_cue(1.0, {"stream": cue_stream, "volume_db": 0.0, "track": track}))
+	sequence.shots[0].cues.append(_voice_cue(1.5, {"stream": cue_stream, "volume_db": 0.0, "from": 0.1, "track": track}))
 
 	var mixer := AudioCaptureMixer.new()
 	check(mixer.consume_sequence(sequence) == 3, "all three VO cues queue")
 	var pcm := mixer.render_pcm(3.0, 1)
-	# Track-only cue: placed at 0.0 + start_offset 0.25, halved by -6 dB.
-	var track_peak := _peak(pcm, int(0.30 * 48000), int(0.40 * 48000))
-	check(track_peak > 0.35 and track_peak < 0.55, "track volume halves the clip (%f)" % track_peak)
-	check(_peak(pcm, 0, int(0.02 * 48000)) < 0.01, "start_offset delays the track clip")
-	# Per-cue stream wins over the track stream: 1 kHz burst at 1.0 s.
-	var override_peak := _peak(pcm, int(1.30 * 48000), int(1.40 * 48000))
-	check(override_peak > 0.7, "per-cue stream overrides the track (%f)" % override_peak)
-	# Per-cue volume_db wins over the track (-6 dB): unity at 1.5 + 0.1.
-	var unity_peak := _peak(pcm, int(1.70 * 48000), int(1.80 * 48000))
-	check(unity_peak > 0.7, "per-cue volume_db overrides the track (%f)" % unity_peak)
+	# Track-only cue: starts at 0.0, skips the first 0.25 s, halved by -6 dB.
+	var track_peak := _peak(pcm, int(0.30 * 48000), int(0.34 * 48000))
+	check(track_peak > 0.3 and track_peak < 0.55, "track volume halves the clip (%f)" % track_peak)
+	check(_peak(pcm, 0, int(0.05 * 48000)) > 0.1, "start_offset keeps playback at the cue time")
+	check(_peak(pcm, int(0.40 * 48000), int(0.50 * 48000)) < 0.01,
+			"start_offset trims the head of the track clip")
+	# Per-cue stream wins over the track stream: unity 1 kHz burst at 1.0 s.
+	var override_peak := _peak(pcm, int(1.05 * 48000), int(1.20 * 48000))
+	check(override_peak > 0.8, "per-cue stream overrides the track (%f)" % override_peak)
+	# Per-cue volume_db (0 dB) and `from` (0.1 s, replacing the track's 0.25 s)
+	# win over the track, so the 0.5 s clip is audible from 1.5 s to 1.9 s.
+	var unity_peak := _peak(pcm, int(1.55 * 48000), int(1.64 * 48000))
+	check(unity_peak > 0.8, "per-cue volume_db overrides the track (%f)" % unity_peak)
 
 	# default_stream fallback when neither cue nor track carries audio.
 	var bare := Sequence.new()
@@ -371,10 +460,23 @@ func _test_hide_variants() -> void:
 	var alt_mixer := AudioCaptureMixer.new()
 	check(alt_mixer.consume_sequence(alt) == 1, "hide:true queues without a stream")
 
+	# A truthy `stop` key behaves like `hide`, via the shared flag parser.
+	var stop_flag := Sequence.new()
+	stop_flag.add_shot(_hold_shot(1.0))
+	stop_flag.shots[0].cues.append(_voice_cue(0.0, {"stream": stream}))
+	stop_flag.shots[0].cues.append(_voice_cue(0.5, {"stop": true, "duration": 0.0}))
+	var stop_mixer := AudioCaptureMixer.new()
+	check(stop_mixer.consume_sequence(stop_flag) == 2, "stop:true queues a hide")
+	var stop_pcm := stop_mixer.render_pcm(1.0, 1)
+	check(_rms(stop_pcm, int(0.60 * float(rate)), int(0.95 * float(rate))) < 0.01,
+			"stop:true silences the narration")
+
 
 func _test_file_roundtrip() -> void:
 	var path := "user://m6_audio_capture/mix.wav"
 	var dir := "user://m6_audio_capture"
+	var missing_dir := "user://m6_audio_missing_dir"
+	_remove_tree(ProjectSettings.globalize_path(missing_dir))
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 	if FileAccess.file_exists(path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
@@ -388,11 +490,11 @@ func _test_file_roundtrip() -> void:
 	var file := FileAccess.open(path, FileAccess.READ)
 	check(file != null, "wav opens for reading")
 	if file != null:
-		# The mix lands in the `data` chunk; skip the 44-byte canonical header.
-		file.seek(44)
+		# The canonical 44-byte header comes first; the mix lands in `data`.
 		var header := file.get_buffer(12)
 		check(header.slice(0, 4).get_string_from_ascii() == "RIFF", "file starts with RIFF")
 		check(header.slice(8, 12).get_string_from_ascii() == "WAVE", "file is WAVE format")
+		file.seek(44)
 		var data := file.get_buffer(int(file.get_length() - 44))
 		var samples := PackedFloat32Array()
 		for byte_index in range(0, data.size() - 1, 2):
@@ -406,6 +508,23 @@ func _test_file_roundtrip() -> void:
 		check(peak > 0.3, "decoded payload carries audible audio (%f)" % peak)
 		file.close()
 
-	check(not mixer.mix_to_wav("user://m6_audio_missing_dir/nested/mix.wav", 0.1),
+	check(not mixer.mix_to_wav(missing_dir.path_join("nested/mix.wav"), 0.1),
 			"mix_to_wav fails cleanly on a missing directory")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+
+func _remove_tree(absolute_path: String) -> void:
+	var dir := DirAccess.open(absolute_path)
+	if dir == null:
+		return
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while not entry.is_empty():
+		var child := absolute_path.path_join(entry)
+		if dir.current_is_dir():
+			_remove_tree(child)
+		else:
+			DirAccess.remove_absolute(child)
+		entry = dir.get_next()
+	dir.list_dir_end()
+	DirAccess.remove_absolute(absolute_path)

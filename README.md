@@ -6,11 +6,12 @@ frame-accurate MP4 export.
 
 GDScript only. No C#, no shaders, no GDExtensions.
 
-> **Status: M4 complete.** Core runtime (Shot / Cue / Sequence / Director /
+> **Status: M6 complete.** Core runtime (Shot / Cue / Sequence / Director /
 > ExplainerCamera), UI sequencing (CaptionRevealer / Callout / LowerThird), VO
 > sync (VoiceOver / VoiceTrack, marker snapping), deterministic frame rendering
-> (RenderSettings / FrameRenderer / FfmpegEncoder), demo scene and headless
-> tests. The editor dock (M5) and polish (M6) are next.
+> (RenderSettings / FrameRenderer / FfmpegEncoder), the Studio editor dock (M5),
+> offline VO capture and WAV mixing (AudioCaptureMixer, M6), demo scene and
+> headless tests.
 
 ## Requirements
 
@@ -48,6 +49,10 @@ godot --headless -s tests/test_marker_snapping.gd
 godot --headless -s tests/test_render_settings.gd
 godot --headless -s tests/test_ffmpeg_encoder.gd
 godot --headless -s tests/test_frame_renderer.gd
+godot --headless -s tests/test_editor_model.gd
+godot --headless -s tests/test_preview_timeline.gd
+godot --headless -s tests/test_audio_capture_mixer.gd
+godot --headless -s tests/test_render_voice_capture.gd
 
 # Parse check (exit code 0 = clean)
 godot --headless --check-only --script addons/explainer_studio/core/shot.gd
@@ -108,10 +113,11 @@ overrides:
 
 `VoiceTrack` (`.tres`-serializable) holds `stream`, `volume_db`, `bus`, `fade_in`,
 `fade_out` and `start_offset`. Precedence is per-cue `data` → track → player
-defaults. A hide cue's optional `duration` wins over `VoiceTrack.fade_out`; without
-it, `stop_voice()` uses the track's `fade_out`, then the player's
-`fade_out_duration`. Narration deliberately outlives the shot that starts it, so a
-line can bridge a cut; send a `hide`/`stop` cue to fade it out.
+defaults. A hide cue's optional `duration` is clamped to the shot's remaining
+time; without one the fade spends that whole remaining budget. Calling
+`stop_voice()` directly is different: it uses the active track's `fade_out`, then
+the player's `fade_out_duration`. Narration deliberately outlives the shot that
+starts it, so a line can bridge a cut; send a `hide`/`stop` cue to fade it out.
 
 Cues can snap to named sequence beats instead of using raw `time`:
 
@@ -128,6 +134,24 @@ cue.data = {"track": my_voice_track}
 `Sequence` also exposes `get_marker_names()`, `get_nearest_marker()`,
 `get_nearest_marker_time()`, `snap_to_marker()` and `remove_marker()` for the
 preview scrubber and the M5 dock. Unknown markers warn and fall back to `time`.
+
+## Editor dock (M5)
+
+Enable the plugin under **Project → Project Settings → Plugins** to add the
+**Explainer Studio** dock:
+
+- load a `Sequence` resource and edit its display name,
+- add / duplicate / move / remove shots and cues, with an inspector for the
+  shot (kind, duration, zoom, target, rect, ease, transition) and the cue
+  (action, time, marker, target, JSON `data`),
+- edit named markers and see `Sequence.validate()` issues in place,
+- scrub the preview with play/pause, loop and click-to-seek.
+
+The dock is a thin view. `SequenceEditorModel` owns authoring and structural
+edits, `PreviewTimeline` owns timeline maths, and `PreviewScrubber` only draws
+them. Edits go through `EditorUndoRedoManager`, so undo/redo and `.tres` saves
+behave like any other resource. Both helper classes are covered by headless
+tests.
 
 ## Deterministic rendering (M4)
 
@@ -167,15 +191,59 @@ encode unless `keep_frames` is set. `get_frame_count()`, `get_frame_time()`,
 frame naming, validation and ffmpeg argument building are plain functions, which
 keeps the headless tests fast and ffmpeg-free.
 
-Audio: M4 muxes an already-mixed file through `audio_path` and pads short tracks
-with silence so the picture keeps its full length (`-af apad -shortest`). The
-[VoiceOver] player is real-time; offline VO capture/mixing is polished in M6.
+Audio: `audio_path` still muxes an already-mixed file and pads short tracks with
+silence so the picture keeps its full length (`-af apad -shortest`). The
+[VoiceOver] player is real-time; attach an [AudioCaptureMixer] to mix its cues
+offline instead (M6 below).
+
+## Offline VO capture (M6)
+
+The live [VoiceOver] player cannot produce a waveform under `--fixed-fps`.
+[AudioCaptureMixer] walks a `Sequence`, resolves every `voice_over` cue with the
+same marker maths as the [Director], places each clip at its absolute sequence
+time, and sums the whole take into one 16-bit PCM WAV. Hide/stop cues fade the
+active clip using the shot's remaining budget, and `from` /
+[member VoiceTrack.start_offset] skip into the source clip exactly like
+`AudioStreamPlayer.play(from)`; a per-cue `from` replaces the track offset.
+
+The runtime has a single [VoiceOver] player, so a new line cuts the one already
+playing; `consume_sequence()` mirrors that, while direct `queue_voice()` calls
+layer unless they pass `replace_active = true`. Only 16-bit PCM
+`AudioStreamWAV` clips can be mixed — other stream formats are skipped with a
+warning so a render never muxes audio the mixer could not read.
+
+```gdscript
+var renderer := FrameRenderer.new()
+add_child(renderer)
+renderer.director = director
+renderer.voice_mixer = AudioCaptureMixer.new()
+var ok := await renderer.render(sequence, render_settings)
+# -> user://renders/intro_voice.wav is mixed and muxed automatically
+```
+
+An explicit [member RenderSettings.audio_path] always wins and skips the offline
+mix; without a mixer the render stays silent, preserving M4 behaviour. The demo
+wires a mixer for `--render`, so voice cues are included unless `--audio` passes
+an authored track:
+
+```powershell
+godot --fixed-fps 60 scenes/demo/m1_shots.tscn -- --render --out user://m1_demo.mp4
+```
+
+The generated track follows the output name (`take.mp4` → `take_voice.wav`), and
+the renderer treats that convention as its own output: a profile saved after a
+render, or a repeat pass, re-mixes instead of trusting a deleted or stale WAV.
+
+`mix_to_wav()` writes beside the output (the directory must exist),
+`render_pcm()` returns the mixed samples for CI, and `build_wav()` wraps them in
+an in-memory `AudioStreamWAV`. Everything is pure, so the tests need no engine
+clock or ffmpeg.
 
 ## Layout
 
 ```
 addons/explainer_studio/
-├── plugin.cfg / plugin.gd        EditorPlugin entry point (dock lands in M5)
+├── plugin.cfg / plugin.gd        EditorPlugin entry point (registers the dock)
 ├── core/
 │   ├── shot.gd                   Shot resource (.tres-serializable)
 │   ├── cue.gd                    Cue resource: time/action/target + payload
@@ -189,12 +257,17 @@ addons/explainer_studio/
 │   └── lower_third.gd            Sliding title card
 ├── audio/
 │   ├── voice_over.gd             Cue-driven narration player
-│   └── voice_track.gd            Serialized clip + mix settings
+│   ├── voice_track.gd            Serialized clip + mix settings
+│   └── audio_capture_mixer.gd    Offline VO capture, PCM mixing, WAV writing
 ├── render/
 │   ├── render_settings.gd        Render profile, frame math, ffmpeg args
 │   ├── frame_renderer.gd         Fixed-step capture loop and cleanup
 │   └── ffmpeg_encoder.gd         Process runner + result metadata
-├── editor/                       M5 home
+├── editor/
+│   ├── studio_dock.gd            Explainer Studio dock
+│   ├── sequence_editor_model.gd  Authoring model (no editor dependency)
+│   ├── preview_timeline.gd       Timeline maths (shared with tests)
+│   └── preview_scrubber.gd       Shot/cue/marker scrubber control
 scenes/demo/m1_shots.tscn         Five-shot demo over placeholder art
 scenes/demo/m1_demo.gd            Builds the demo sequence, prints cues
 scripts/camera_2d.gd              Deprecated alias → ExplainerCamera

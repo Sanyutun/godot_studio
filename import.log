@@ -1,0 +1,122 @@
+﻿Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Started Project initialization (5 steps)[39m[0m
+[   0% ] [90m[1mfirst_scan_filesystem[22m | Scanning file structure...[39m[0m
+[  16% ] [90m[1mfirst_scan_filesystem[22m | Loading global class names...[39m[0m
+cmd : Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+At line:1 char:1
++ cmd /c ""D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_c ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Unicode parsing...ading byte (ff):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+[  33% ] [90m[1mfirst_scan_filesystem[22m | Verifying GDExtensions...[39m[0m
+[  50% ] [90m[1mfirst_scan_filesystem[22m | Creating autoload scripts...[39m[0m
+[  66% ] [90m[1mfirst_scan_filesystem[22m | Initializing plugins...[39m[0m
+[Explainer Studio] v0.6.0 ready ┬╖ Studio dock loaded
+[  83% ] [90m[1mfirst_scan_filesystem[22m | Starting file scan...[39m[0m
+[92m[ DONE ][39m [1mfirst_scan_filesystem[22m
+[0m
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+[   0% ] [90m[1mupdate_scripts_classes[22m | Started Registering global classes... (47 steps)[39m[0m
+[   0% ] [90m[1mupdate_scripts_classes[22m | AudioCaptureMixer[39m[0m
+[   2% ] [90m[1mupdate_scripts_classes[22m | VoiceOver[39m[0m
+[   4% ] [90m[1mupdate_scripts_classes[22m | VoiceTrack[39m[0m
+[   6% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[   8% ] [90m[1mupdate_scripts_classes[22m | Cue[39m[0m
+[  10% ] [90m[1mupdate_scripts_classes[22m | CueEvent[39m[0m
+[  12% ] [90m[1mupdate_scripts_classes[22m | Director[39m[0m
+[  14% ] [90m[1mupdate_scripts_classes[22m | Sequence[39m[0m
+[  16% ] [90m[1mupdate_scripts_classes[22m | Shot[39m[0m
+[  18% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  20% ] [90m[1mupdate_scripts_classes[22m | PreviewTimeline[39m[0m
+[  22% ] [90m[1mupdate_scripts_classes[22m | SequenceEditorModel[39m[0m
+[  25% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  27% ] [90m[1mupdate_scripts_classes[22m | FfmpegEncoder[39m[0m
+[  29% ] [90m[1mupdate_scripts_classes[22m | FrameRenderer[39m[0m
+[  31% ] [90m[1mupdate_scripts_classes[22m | RenderSettings[39m[0m
+[  33% ] [90m[1mupdate_scripts_classes[22m | BarChartRevealer[39m[0m
+[  35% ] [90m[1mupdate_scripts_classes[22m | Callout[39m[0m
+[  37% ] [90m[1mupdate_scripts_classes[22m | CaptionRevealer[39m[0m
+[  39% ] [90m[1mupdate_scripts_classes[22m | CounterRevealer[39m[0m
+[  41% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  43% ] [90m[1mupdate_scripts_classes[22m | LowerThird[39m[0m
+[  45% ] [90m[1mupdate_scripts_classes[22m | PathDrawer[39m[0m
+[  47% ] [90m[1mupdate_scripts_classes[22m | StickerFrame[39m[0m
+[  50% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  52% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  54% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  56% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  58% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  60% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  62% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  64% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  66% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  68% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  70% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  72% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  75% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  77% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  79% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  81% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  83% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  85% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  87% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  89% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  91% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  93% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[  95% ] [90m[1mupdate_scripts_classes[22m | [39m[0m
+[92m[ DONE ][39m [1mupdate_scripts_classes[22m
+[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Started Loading editor (5 steps)[39m[0m
+[   0% ] [90m[1mloading_editor_layout[22m | Loading editor layout...[39m[0m
+[  16% ] [90m[1mloading_editor_layout[22m | Loading docks...[39m[0m
+[92m[ DONE ][39m [1mloading_editor_layout[22m
+[0m
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (ff)
+Unicode parsing error, some characters were replaced with ∩┐╜ (U+FFFD): Invalid UTF-8 leading byte (fe)
+ERROR: Script 'res://addons/explainer_studio/camera/explainer_camera.gd' contains invalid unicode (UTF-8), so it was 
+not loaded. Please ensure that scripts are saved in valid UTF-8 unicode.
+   at: load_source_code (modules/gdscript/gdscript.cpp:1151)
+ERROR: Failed loading resource: res://addons/explainer_studio/camera/explainer_camera.gd.
+   at: _load (core/io/resource_loader.cpp:317)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:27)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:267)
+SCRIPT ERROR: Parse Error: Cannot infer the type of "active_camera" variable because the value doesn't have a set type.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:156)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:272)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:273)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:276)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:277)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:285)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://addons/explainer_studio/core/director.gd:286)
+ERROR: Failed to load script "res://addons/explainer_studio/core/director.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+SCRIPT ERROR: Parse Error: Could not find type "ExplainerCamera" in the current scope.
+   at: GDScript::reload (res://scenes/demo/m1_demo.gd:14)
+SCRIPT ERROR: Parse Error: Could not resolve external class member "camera".
+   at: GDScript::reload (res://scenes/demo/m1_demo.gd:30)
+ERROR: Failed to load script "res://scenes/demo/m1_demo.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript_resource_format.cpp:46)
+ERROR: Parse Error: Invalid data. [Resource file res://scenes/demo/m1_shots.tscn:86]
+   at: _parse_node_tag (scene/resources/resource_format_text.cpp:293)
+ERROR: Failed loading resource: res://scenes/demo/m1_shots.tscn.
+   at: _load (core/io/resource_loader.cpp:317)
+ERROR: Plugin is not attached to debugger.
+   at: is_active (editor/debugger/editor_debugger_plugin.cpp:102)

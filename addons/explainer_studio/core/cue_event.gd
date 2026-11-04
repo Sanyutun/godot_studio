@@ -33,6 +33,21 @@ func get_data(key: String, default_value: Variant = null) -> Variant:
 	return cue.get_data(key, default_value)
 
 
+## Truthiness for cue flags such as `hide` and `stop`. Payloads are often JSON,
+## so accept booleans, non-empty strings (`"stop"`) and non-zero numbers rather
+## than calling `bool()` on an arbitrary Variant.
+static func is_flag(value: Variant) -> bool:
+	if value == null:
+		return false
+	if value is bool:
+		return value
+	if value is String or value is StringName:
+		return not String(value).is_empty()
+	if value is int or value is float:
+		return float(value) != 0.0
+	return false
+
+
 ## Reveal/animation budget for this cue: the requested duration clamped to
 ## [member remaining]. A negative or missing request uses the full budget.
 func get_budget(requested: float) -> float:
