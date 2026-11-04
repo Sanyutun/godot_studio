@@ -209,7 +209,7 @@ func build_ffmpeg_args() -> PackedStringArray:
 		# Pad short narration to the video length so -shortest never truncates
 		# the picture; a longer track is still cut off at the last frame.
 		args.append("-af")
-		args.append("apad")
+		args.append("loudnorm=I=-14:TP=-1:LRA=7,apad")
 		args.append("-shortest")
 	var extension := get_output_path().get_extension().to_lower()
 	if extension in ["mp4", "mov", "m4v"]:

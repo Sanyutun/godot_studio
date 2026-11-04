@@ -1,0 +1,156 @@
+[gd_scene load_steps=16 format=3 uid="uid://c8k4m2n6p8q1r"]
+
+[ext_resource type="Script" path="res://scenes/demo/m1_demo.gd" id="1_script"]
+[ext_resource type="Script" path="res://addons/explainer_studio/camera/explainer_camera.gd" id="2_camera"]
+[ext_resource type="Script" path="res://addons/explainer_studio/core/director.gd" id="3_director"]
+[ext_resource type="Script" path="res://addons/explainer_studio/audio/voice_over.gd" id="4_voice"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/caption_revealer.gd" id="5_caption"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/callout.gd" id="6_callout"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/lower_third.gd" id="7_lower"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/BarChartRevealer.gd" id="8_barchart"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/CounterRevealer.gd" id="9_counter"]
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/PathDrawer.gd" id="10_path"]
+[ext_resource type="PackedScene" uid="uid://b8xk3m2n4p1q5" path="res://addons/explainer_studio/ui/StickerFrame.tscn" id="11_sticker"]
+[ext_resource type="PackedScene" uid="uid://c3h4j5k6l7m8n" path="res://addons/explainer_studio/ui/FilmGrain.tscn" id="12_grain"]
+[ext_resource type="PackedScene" uid="uid://d4i5j6k7l8m9n" path="res://addons/explainer_studio/ui/Vignette.tscn" id="13_vignette"]
+
+[sub_resource type="Gradient" id="Gradient_1"]
+colors = PackedColorArray(1, 1, 1, 1, 0.8, 0.9, 1, 1)
+
+[sub_resource type="GradientTexture2D" id="GradientTexture2D_1"]
+gradient = SubResource("Gradient_1")
+fill_from = Vector2(0.5, 0)
+fill_to = Vector2(0.5, 1)
+
+[node name="Microbiome10s" type="Node2D"]
+script = ExtResource("1_script")
+
+[node name="ExplainerCamera" type="Camera2D" parent="."]
+script = ExtResource("2_camera")
+
+[node name="Director" type="Node" parent="."]
+script = ExtResource("3_director")
+camera = NodePath("../ExplainerCamera")
+
+[node name="VoiceOver" type="AudioStreamPlayer" parent="."]
+script = ExtResource("4_voice")
+
+[node name="Canvas" type="Node2D"]
+position = Vector2(3000, 1500)
+
+[node name="BodySilhouette" type="ColorRect" parent="Canvas"]
+offset_left = -2400.0
+offset_top = -400.0
+offset_right = -2200.0
+offset_bottom = 400.0
+color = Color(0.9, 0.7, 0.6, 1)
+
+[node name="GutPulse" type="ColorRect" parent="Canvas"]
+offset_left = -1200.0
+offset_top = -200.0
+offset_right = -800.0
+offset_bottom = 200.0
+color = Color(0.8, 0.5, 0.4, 1)
+
+[node name="GutTube" type="ColorRect" parent="Canvas"]
+offset_left = -1200.0
+offset_top = -100.0
+offset_right = -600.0
+offset_bottom = 100.0
+color = Color(0.6, 0.4, 0.3, 1)
+
+[node name="Sticker1" parent="Canvas" instance=ExtResource("11_sticker")]
+offset_left = -1000.0
+offset_top = -300.0
+offset_right = -800.0
+offset_bottom = -100.0
+
+[node name="Sticker2" parent="Canvas" instance=ExtResource("11_sticker")]
+offset_left = -900.0
+offset_top = 50.0
+offset_right = -700.0
+offset_bottom = 250.0
+
+[node name="Sticker3" parent="Canvas" instance=ExtResource("11_sticker")]
+offset_left = -750.0
+offset_top = -250.0
+offset_right = -550.0
+offset_bottom = -50.0
+
+[node name="Sticker4" parent="Canvas" instance=ExtResource("11_sticker")]
+offset_left = -650.0
+offset_top = 100.0
+offset_right = -450.0
+offset_bottom = 300.0
+
+[node name="SpeciesGrid" type="GridContainer" parent="Canvas"]
+offset_left = 1200.0
+offset_top = -200.0
+offset_right = 1400.0
+offset_bottom = 0.0
+columns = 10
+
+[node name="BarChartRevealer" type="Control" parent="Canvas"]
+offset_left = 2400.0
+offset_top = -150.0
+offset_right = 2600.0
+offset_bottom = 150.0
+script = ExtResource("8_barchart")
+bars = Array[Dictionary]([{"label": "人体基因", "value": 20000, "color": Color(0.5, 0.5, 0.5, 1)}, {"label": "微生物基因", "value": 3000000, "color": Color(0.2, 0.6, 1, 1)}])
+
+[node name="CounterRevealer" type="Label" parent="Canvas"]
+offset_left = 0.0
+offset_top = -700.0
+offset_right = 300.0
+offset_bottom = -650.0
+theme_override_font_sizes/font_size = 72
+text = "0"
+script = ExtResource("9_counter")
+
+[node name="PathDrawer" type="Line2D" parent="Canvas"]
+points = PackedVector2Array(-1500, 900, -1000, 800, -500, 700, 0, 600, 500, 500)
+width = 4.0
+default_color = Color(1, 0.3, 0.3, 1)
+script = ExtResource("10_path")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Caption" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_caption")
+
+[node name="Callout" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6_callout")
+
+[node name="LowerThird" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("7_lower")
+
+[node name="FilmGrain" parent="HUD" instance=ExtResource("12_grain")]
+
+[node name="Vignette" parent="HUD" instance=ExtResource("13_vignette")]
+
+[node name="Status" type="Label" parent="HUD"]
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_top = -23.0
+offset_right = 40.0
+grow_vertical = 0
+text = "Microbiome Demo"

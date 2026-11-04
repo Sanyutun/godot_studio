@@ -1,0 +1,13 @@
+[gd_scene load_steps=2 format=3 uid="uid://d4i5j6k7l8m9n"]
+
+[ext_resource type="Script" path="res://addons/explainer_studio/ui/Vignette.gd" id="1_script"]
+
+[node name="Vignette" type="ColorRect"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 1, 1, 1)
+script = ExtResource("1_script")

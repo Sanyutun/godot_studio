@@ -246,6 +246,9 @@ func _capture_frame_image(index: int) -> Image:
 	if not capture_frame.is_valid() and _get_capture_viewport() == null:
 		return null
 	await _await_frame()
+	# Ensure deterministic rendering in headless mode
+	if RenderingServer.has_method("force_draw"):
+		RenderingServer.force_draw()
 	return _read_frame(index)
 
 
@@ -254,6 +257,8 @@ func _await_frame() -> void:
 		await await_frame.call()
 		return
 	await RenderingServer.frame_post_draw
+	# Extra frame wait for deterministic capture
+	await get_tree().process_frame
 
 
 func _read_frame(index: int) -> Image:

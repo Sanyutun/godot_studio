@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Explainer Studio"
 config/description="Turns scripted shot lists into 2D explainer videos."
-run/main_scene="res://scenes/demo/m1_shots.tscn"
+run/main_scene=" res://scenes/demo/m1_shots.tscn\
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
