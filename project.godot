@@ -11,22 +11,24 @@ config_version=5
 [application]
 
 config/name="Explainer Studio"
-config/description="Turns scripted shot lists into 2D explainer videos."
+config/features=PackedStringArray("4.7", "Forward Plus")
 run/main_scene=" res://scenes/demo/m1_shots.tscn\
-config/features=PackedStringArray("4.7", "GL Compatibility")
-
-[display]
-
-window/size/viewport_width=1280
-window/size/viewport_height=720
-window/stretch/mode="canvas_items"
+config/description="Turns scripted shot lists into 2D explainer videos."
+config/icon="res://icon.svg"
 
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/explainer_studio/plugin.cfg")
 
+[display]
+
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
 [rendering]
 
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.04, 0.045, 0.06, 1)
+rendering_device/driver.windows="d3d12"
